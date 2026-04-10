@@ -1,0 +1,891 @@
+```{r}
+
+##################
+## Package loading
+##################
+
+# Install MrBeanApp from GitHub
+remotes::install_github("AparicioJohan/MrBeanApp")
+
+# Load required libraries and MrBean
+library(MrBean)
+library(asreml)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(purrr)
+library(corrplot)
+library(RColorBrewer)
+
+# Run the MrBean app and activate ASReml license
+MrBean::run_app()
+asreml.license.activate()
+
+```
+
+```{r}
+
+####################################################################################################################
+## Use MrBean interface to extract BLUEs for each standardized trait within each environment
+# - Used AR1 x AR1 row x column corrections in ASReml for all envs. except for 22THD (used SpATS)
+  # - Run genotype as fixed to obtain estimates (BLUEs) for each genotype in each environment, and precision weights
+# - Obtain within-environment repeatabilities by running genotype as random in SpATS 
+####################################################################################################################
+
+```
+
+```{r}
+
+##################################################################################
+## Load dataset containing all BLUEs in all environments and define traits/weights
+##################################################################################
+
+# Load the dataset from the specified path
+data <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Mr. Bean BLUEs/BLUEs_standardized data.csv", stringsAsFactors = TRUE)
+
+# Ensure Environment and Genotype columns are set as factors
+data$Environment <- as.factor(data$Environment)
+data$Genotype <- as.factor(data$Genotype)
+
+# Convert columns from the 3rd to the last to numeric
+data[, 4:ncol(data)] <- lapply(data[, 4:ncol(data)], function(x) {
+  if (is.factor(x)) {
+    as.numeric(as.character(x)) # Convert Factor to Character, then to Numeric
+  } else if (is.character(x)) {
+    as.numeric(x) # Directly convert Character to Numeric
+  } else {
+    x # Keep as is if already numeric
+  }
+})
+
+# View the structure again to confirm changes
+str(data)
+
+# Define the traits and corresponding weights
+traits <- c(
+  "HD_blue", "SD_blue", "GFP_blue", "PH_blue", "TC_blue", "NDVI_blue", "GR_blue", 
+  "GY_blue", "TKW_blue", "TW_blue", "KA_blue", "KL_blue", "KW_blue", "GP_blue", 
+  "GPD_blue", "PQS_blue", "SRC_blue", 
+  "B_blue", "Na_blue", "Mg_blue", "Al_blue", "P_blue", "K_blue", "Ca_blue", 
+  "Fe_blue", "Mn_blue", "Co_blue", "Ni_blue", "Cu_blue", "Zn_blue", "As_blue", 
+  "Se_blue", "Rb_blue", "Sr_blue", "Mo_blue", "Cd_blue", 
+  "NDVI_till_blue", "NDVI_joint_blue", "NDVI_boot_blue", "NDVI_anth_blue", 
+  "NDVI_milk_blue", 
+  "GR_till_blue", "GR_joint_blue", "GR_boot_blue", "GR_anth_blue", "GR_milk_blue"
+)
+
+# Define weights for each trait in the same order
+weights <- c(
+  "HD_weight", "SD_weight", "GFP_weight", "PH_weight", "TC_weight", "NDVI_weight", 
+  "GR_weight", "GY_weight", "TKW_weight", "TW_weight", "KA_weight", "KL_weight", 
+  "KW_weight", "GP_weight", "GPD_weight", "PQS_weight", "SRC_weight", 
+  "B_weight", "Na_weight", "Mg_weight", "Al_weight", "P_weight", "K_weight", 
+  "Ca_weight", "Fe_weight", "Mn_weight", "Co_weight", "Ni_weight", "Cu_weight", 
+  "Zn_weight", "As_weight", "Se_weight", "Rb_weight", "Sr_weight", "Mo_weight", 
+  "Cd_weight", 
+  "NDVI_till_weight", "NDVI_joint_weight", "NDVI_boot_weight", "NDVI_anth_weight", 
+  "NDVI_milk_weight", 
+  "GR_till_weight", "GR_joint_weight", "GR_boot_weight", "GR_anth_weight", 
+  "GR_milk_weight"
+)
+
+```
+
+```{r}
+
+##########################################################################
+## Run ASReml mixed model analysis to obtain BLUPs using BLUEs and weights
+# - Output files created:
+  # - Genetic repeatabilities for each trait
+  # - BLUPs for each trait
+  # - Variance components for each trait
+  # - Fixed effect estimates for each trait within each environment
+##########################################################################
+
+# Initialize lists
+heritabilities <- list()
+blups_list <- list()
+varcomps <- list()
+fixef_list <- list()
+
+# Iterate over each trait and its corresponding weight
+for (i in seq_along(traits)) {
+  trait <- traits[i]
+  weight <- weights[i]
+  
+  # Filter the dataset to keep rows with non-missing values for the current trait and weight
+  trait_data <- data %>%
+    filter(!is.na(.data[[trait]]) & !is.na(.data[[weight]])) %>%
+    select(Environment, Genotype, trait_value = all_of(trait), weight_value = all_of(weight))
+  
+  # Fit a linear mixed model using ASReml for the current trait
+  # Fixed effect: Environment
+  # Random effects: Genotype (main effect) and Genotype x Environment (GxE interaction)
+  # Weight observations by the specified weight for the current trait
+  # Start values constraint: set residual variance ('units!R') to 1 and fix it during fitting
+  asreml_model <- asreml(
+    fixed = trait_value ~ 0 + Environment, # Fixed effect for environment
+    random = ~ Genotype + Environment:Genotype, # Random effects for Genotype and GxE
+    rcov = ~ idv(units),
+    weights = weight_value, # Use corresponding weights
+    data = trait_data,
+    na.action = na.method("include"),
+    family = asr_gaussian(dispersion = 1)
+  )
+
+  # Check convergence and extract model summary
+  model_summary <- summary(asreml_model, coef = TRUE)
+  vc <- model_summary$varcomp  # Extract variance components
+  fe <- asreml_model$coefficients$fixed
+  
+  varcomps[[trait]] <- vc
+  fixef_list[[trait]] <- fe
+
+  # Extract the genetic variance and GxE variance from the variance components
+  genetic_var <- vc["Genotype", "component"]
+  gxe_var <- vc["Environment:Genotype", "component"]
+
+  # Calculate repeatability as the proportion of genetic variance to total variance (genetic + GxE)
+  heritability <- genetic_var / (genetic_var + gxe_var)
+  heritabilities[[trait]] <- heritability  # Store repeatability in list for current trait
+
+  # Predict BLUPs for each genotype and store them in the list
+  blups <- predict(asreml_model, classify = "Genotype")$pvals
+  blups_list[[trait]] <- blups
+
+  # Print results for the current trait
+  cat("Trait:", trait, "\n")
+  cat("Genetic Variance:", genetic_var, "\n")
+  cat("GxE Variance:", gxe_var, "\n")
+  cat("Heritability:", heritability, "\n")
+  cat("BLUPs for", trait, "(first few):\n")
+  print(head(blups))  # Display the first few BLUP values
+  cat("\n")
+}
+
+# Convert the list to a data frame
+heritabilities_df <- data.frame(
+  Trait = names(heritabilities),
+  Heritability = unlist(heritabilities)
+)
+
+# Save the data frame to a CSV file
+write.csv(heritabilities_df, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/heritabilities.csv", row.names = FALSE)
+
+# Reuse the same output folder you used for heritabilities
+out_dir <- "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Variance components across traits
+vc_long <- do.call(rbind, lapply(names(varcomps), function(tr) {
+  vc <- varcomps[[tr]]
+  if (!is.data.frame(vc)) vc <- as.data.frame(vc)
+  if (is.null(vc$Term)) {
+    vc$Term <- rownames(vc)
+    rownames(vc) <- NULL
+  }
+  vc$Trait <- tr
+  cols <- c("Trait","Term", setdiff(names(vc), c("Trait","Term")))
+  vc[, cols, drop = FALSE]
+}))
+vc_long <- vc_long[order(vc_long$Trait, vc_long$Term), ]
+
+write.csv(vc_long,
+          file.path(out_dir, "variance_components_all_traits.csv"),
+          row.names = FALSE)
+
+# Fixed effects across traits
+fixef_long <- do.call(rbind, lapply(names(fixef_list), function(tr) {
+  fe <- fixef_list[[tr]]
+  if (is.null(fe)) return(NULL)
+
+  if (is.atomic(fe) && is.null(dim(fe))) {
+    df <- data.frame(Term = names(fe), Estimate = as.numeric(fe), SE = NA_real_)
+  } else {
+    df <- as.data.frame(fe)
+    if (!"Term" %in% names(df)) {
+      df$Term <- rownames(df)
+      rownames(df) <- NULL
+    }
+    names(df) <- sub("(?i)^estimate$", "Estimate", names(df), perl = TRUE)
+    names(df) <- sub("(?i)^std\\.error$", "SE", names(df), perl = TRUE)
+  }
+  df$Trait <- tr
+  cols <- c("Trait","Term",
+            intersect(c("Estimate","SE","z.ratio","wald","p.value"), names(df)),
+            setdiff(names(df), c("Trait","Term","Estimate","SE","z.ratio","wald","p.value")))
+  df[, unique(cols), drop = FALSE]
+}))
+if (!is.null(fixef_long) && nrow(fixef_long)) {
+  fixef_long <- fixef_long[order(fixef_long$Trait, fixef_long$Term), ]
+  write.csv(fixef_long,
+            file.path(out_dir, "fixed_effects_all_traits.csv"),
+            row.names = FALSE)
+}
+
+# Genotype BLUPs across traits
+blup_long <- do.call(rbind, lapply(names(blups_list), function(tr) {
+  pv <- blups_list[[tr]]
+  if (is.null(pv)) return(NULL)
+  df <- as.data.frame(pv)
+  nml <- tolower(names(df))
+  geno_col <- names(df)[match("genotype", nml)]
+  pred_col <- names(df)[match("predicted.value", nml)]
+  se_col   <- names(df)[match("std.error", nml)]
+  if (is.na(geno_col)) geno_col <- names(df)[grep("genotype", nml, fixed = TRUE)][1]
+  if (is.na(pred_col)) pred_col <- names(df)[grep("pred", nml)][1]
+
+  out <- data.frame(
+    Trait    = tr,
+    Genotype = df[[geno_col]],
+    Pred     = df[[pred_col]],
+    SE       = if (!is.na(se_col)) df[[se_col]] else NA_real_
+  )
+  out
+}))
+if (!is.null(blup_long) && nrow(blup_long)) {
+  blup_long <- blup_long[order(blup_long$Trait, blup_long$Genotype), ]
+  write.csv(blup_long,
+            file.path(out_dir, "genotype_blups_all_traits.csv"),
+            row.names = FALSE)
+}
+
+# Rename and combine BLUPs for all traits
+blups_renamed <- purrr::map2(blups_list, names(blups_list), ~ .x %>%
+                                select(Genotype, predicted.value) %>%
+                                rename(!!str_remove(.y, "_blue") := predicted.value))
+
+# Combine all BLUPs into a single data frame
+blups_df <- purrr::reduce(blups_renamed, full_join, by = "Genotype")
+
+# Save the combined BLUPs to a CSV file
+write.csv(blups_df, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/standardized data_BLUPs.csv", row.names = FALSE)
+
+# Confirm "_blue" was removed from column names
+print(head(blups_df))
+
+```
+
+```{r}
+
+#####################################################################################
+## Plot trait distributions with one facet for each environment (BLUEs) and for BLUPs
+#####################################################################################
+
+# Plotting configuration
+cfg <- list(
+  rp_name         = "KS061278M-4",
+  checks          = c("Billings","Joe","Showdown","SY Monument","WB 4699"),
+  check_colors    = c(
+    "Billings"    = "#1b9e77",
+    "Joe"         = "#7570b3",
+    "Showdown"    = "#e7298a",
+    "SY Monument" = "#66a61e",
+    "WB 4699"     = "#e6ab02"
+  ),
+  binwidth        = 0.25,
+  boundary        = 0,
+  blup_label      = "Across-env (BLUP)",
+  env_order       = c("2021 THD","2022 EL","2022 RL","2022 THD","2023 RL","2023 THD"),
+  place_blup_top  = TRUE,
+  label_rp        = TRUE,
+
+  # spacing / stacking
+  use_relative     = TRUE,
+  label_pad_rel    = 0,
+  label_step_rel   = 0.3,
+  x_stack_tol_rel  = 0.005,
+  x_stack_tol      = 0,  
+
+  # rendering
+  rp_color         = "#d95f02",
+  rp_size          = 1.5,
+  non_rp_size      = 0.6,
+
+  # export
+  out_dir          = "histograms_by_trait_png",
+  width_in         = 12,
+  height_in        = 8,
+  dpi              = 300
+)
+
+`%||%` <- function(a,b) if (is.null(a)) b else a
+
+# Plotting function
+plot_blue_blup_hists <- function(trait, cfg) {
+
+  stopifnot(all(c("Environment","Genotype","Group") %in% names(data)))
+  stopifnot(all(c("Genotype", trait) %in% names(blups_df)))
+
+  col_blue <- paste0(trait, "_blue")
+  stopifnot(col_blue %in% names(data))
+
+  d2 <- data
+  d2$Environment <- as.character(d2$Environment)
+  d2$Genotype    <- trimws(as.character(d2$Genotype))
+
+  bl <- blups_df
+  bl$Genotype <- trimws(as.character(bl$Genotype))
+
+  # WILs (within-env BLUEs)
+  wil_blue <- dplyr::filter(d2, Group == "WIL", !is.na(.data[[col_blue]])) |>
+    dplyr::transmute(Environment, Genotype, value = .data[[col_blue]])
+
+  # Anchors (RP + checks) within-env
+  anchors_blue <- dplyr::filter(d2, Group != "WIL", !is.na(.data[[col_blue]])) |>
+    dplyr::transmute(Environment,
+                     Genotype,
+                     Legend = dplyr::if_else(Genotype == cfg$rp_name, "RP", Genotype),
+                     value = .data[[col_blue]])
+
+  # Group map
+  gmap <- dplyr::distinct(d2, Genotype, Group)
+
+  # WILs (across-env BLUP)
+  wil_blup <- bl |>
+    dplyr::select(Genotype, value = dplyr::all_of(trait)) |>
+    dplyr::left_join(gmap, by = "Genotype") |>
+    dplyr::filter(Group == "WIL") |>
+    dplyr::transmute(Environment = cfg$blup_label, Genotype, value)
+
+  # Anchors (across-env BLUP)
+  anchors_blup <- bl |>
+    dplyr::select(Genotype, value = dplyr::all_of(trait)) |>
+    dplyr::left_join(gmap, by = "Genotype") |>
+    dplyr::filter(Group != "WIL") |>
+    dplyr::transmute(Environment = cfg$blup_label,
+                     Genotype,
+                     Legend = dplyr::if_else(Genotype == cfg$rp_name, "RP", Genotype),
+                     value)
+
+  wil_all     <- dplyr::bind_rows(wil_blue, wil_blup)
+  anchors_all <- dplyr::bind_rows(anchors_blue, anchors_blup)
+
+  env_order <- cfg$env_order %||% unique(d2$Environment)
+  env_levels <- if (cfg$place_blup_top) c(cfg$blup_label, env_order) else c(env_order, cfg$blup_label)
+  wil_all$Environment     <- factor(wil_all$Environment,     levels = env_levels)
+  anchors_all$Environment <- factor(anchors_all$Environment, levels = env_levels)
+
+  # Bin id
+  bin_id <- function(x) cfg$boundary + cfg$binwidth * floor((x - cfg$boundary) / cfg$binwidth)
+  wil_all$bin_lo     <- bin_id(wil_all$value)
+  anchors_all$bin_lo <- bin_id(anchors_all$value)
+
+  # Bar heights and per-panel max
+  bar_counts <- wil_all |>
+    dplyr::count(Environment, bin_lo, name = "bar_n")
+
+  env_max <- bar_counts |>
+    dplyr::group_by(Environment) |>
+    dplyr::summarise(max_n = dplyr::if_else(any(bar_n > 0), max(bar_n), 0L), .groups = "drop")
+
+  # Codes for checks
+  checks <- trimws(cfg$checks)
+  c_map  <- stats::setNames(paste0("C", seq_along(checks)), checks)
+
+  base_df <- anchors_all |>
+    dplyr::mutate(
+      short = dplyr::case_when(
+        Legend == "RP" &  cfg$label_rp ~ "RP",
+        Legend == "RP" & !cfg$label_rp ~ NA_character_,
+        Legend %in% names(c_map)       ~ c_map[Legend],
+        TRUE ~ NA_character_
+      )
+    ) |>
+    dplyr::left_join(bar_counts, by = c("Environment","bin_lo")) |>
+    dplyr::mutate(bar_n = dplyr::coalesce(bar_n, 0L)) |>
+    dplyr::left_join(env_max, by = "Environment")
+
+  x_all  <- range(c(wil_all$value, anchors_all$value), na.rm = TRUE)
+  x_span <- diff(x_all)
+  tol_global <- max(
+    cfg$x_stack_tol,
+    cfg$x_stack_tol_rel * x_span,
+    cfg$binwidth * 0.80
+  )
+
+  env_tol <- data.frame(Environment = levels(wil_all$Environment), tol_env = tol_global)
+  base_df <- base_df |> dplyr::left_join(env_tol, by = "Environment")
+
+  vis_stack <- base_df |>
+    dplyr::filter(!is.na(short)) |>
+    dplyr::group_by(Environment) |>
+    dplyr::arrange(value, .by_group = TRUE) |>
+    dplyr::mutate(
+      gap     = value - dplyr::lag(value),
+      samebin = bin_lo == dplyr::lag(bin_lo),
+      new_cluster = dplyr::if_else(is.na(gap) | (!samebin & gap > tol_env), 1L, 0L),
+      cluster_id  = cumsum(new_cluster)
+    ) |>
+    dplyr::ungroup() |>
+    dplyr::group_by(Environment, cluster_id) |>
+    dplyr::arrange(value, .by_group = TRUE) |>
+    dplyr::mutate(stack_i = dplyr::row_number()) |>
+    dplyr::ungroup() |>
+    dplyr::select(Environment, Genotype, bin_lo, value, short, bar_n, max_n, cluster_id, stack_i)
+
+  base_df <- base_df |>
+    dplyr::left_join(vis_stack[, c("Environment","Genotype","cluster_id","stack_i")],
+                     by = c("Environment","Genotype"))
+
+  pad_step_df <- base_df |>
+    dplyr::mutate(
+      pad_ct  = if (cfg$use_relative) (cfg$label_pad_rel  * pmax(1, max_n)) else cfg$label_pad,
+      step_ct = if (cfg$use_relative) (cfg$label_step_rel * pmax(1, max_n)) else cfg$label_step
+    )
+
+  lab_df <- pad_step_df |>
+    dplyr::group_by(Environment, cluster_id) |>
+    dplyr::mutate(
+      base_y = dplyr::if_else(!is.na(cluster_id), max(bar_n, na.rm = TRUE), bar_n)
+    ) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(
+      y_lab = dplyr::if_else(
+        !is.na(short),
+        base_y + pad_ct + (dplyr::coalesce(stack_i, 1L) - 1L) * step_ct,
+        NA_real_
+      )
+    )
+
+  seg_df <- lab_df |>
+    dplyr::mutate(
+      seg_top = dplyr::if_else(!is.na(y_lab),
+                               pmax(0, y_lab - 0.2 * step_ct),
+                               bar_n + 0.1 * pad_ct)
+    ) |>
+    dplyr::select(Environment, bin_lo, Genotype, seg_top)
+
+  anchors_plot <- anchors_all |>
+    dplyr::left_join(seg_df, by = c("Environment","bin_lo","Genotype"))
+
+  legend_levels <- unique(c("RP", checks))
+  present       <- sort(unique(anchors_all$Legend))
+  legend_levels <- legend_levels[legend_levels %in% present]
+
+  color_map <- stats::setNames(rep("#BBBBBB", length(legend_levels)), legend_levels)
+  size_map  <- stats::setNames(rep(cfg$non_rp_size, length(legend_levels)), legend_levels)
+  color_map[names(cfg$check_colors)] <- cfg$check_colors
+  if ("RP" %in% legend_levels) { color_map["RP"] <- cfg$rp_color; size_map["RP"] <- cfg$rp_size }
+
+  pad    <- max(0.1, x_span * 0.03)
+  x_lim  <- c(x_all[1] - pad, x_all[2] + pad)
+
+  p <- ggplot2::ggplot(wil_all, ggplot2::aes(x = value)) +
+    ggplot2::geom_histogram(
+      binwidth = cfg$binwidth, boundary = cfg$boundary,
+      fill = "#F7F7F7", color = "black", linewidth = 0.25
+    ) +
+    ggplot2::geom_segment(
+      data = dplyr::filter(anchors_plot, Legend != "RP"),
+      ggplot2::aes(x = value, xend = value, y = 0, yend = seg_top,
+                   color = Legend, linewidth = Legend),
+      inherit.aes = FALSE, show.legend = TRUE
+    ) +
+    ggplot2::geom_segment(
+      data = dplyr::filter(anchors_plot, Legend == "RP"),
+      ggplot2::aes(x = value, xend = value, y = 0, yend = seg_top,
+                   color = Legend, linewidth = Legend),
+      inherit.aes = FALSE, show.legend = TRUE
+    ) +
+    ggplot2::geom_label(
+      data = dplyr::filter(lab_df, !is.na(short)),
+      ggplot2::aes(x = value, y = y_lab, label = short, color = Legend),
+      fill = "white", label.size = 0, label.r = grid::unit(0, "pt"),
+      vjust = 0, size = 2.5, show.legend = FALSE
+    ) +
+    ggplot2::scale_color_manual(values = color_map, limits = names(color_map), drop = FALSE) +
+    ggplot2::scale_linewidth_manual(values = size_map, limits = names(size_map), drop = FALSE) +
+    ggplot2::facet_wrap(~Environment, ncol = 1, scales = "free_y") +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.12))) +
+    ggplot2::labs(
+      title = paste(trait, "histograms"),
+      x = "Standardized value (SD units)",
+      y = "Number of WILs",
+      color = NULL, linewidth = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(face = "bold"),
+      panel.grid.minor = ggplot2::element_blank(),
+      plot.margin = ggplot2::margin(t = 12, r = 16, b = 8, l = 10)
+    ) +
+    ggplot2::coord_cartesian(xlim = x_lim, clip = "off")
+
+  print(p); invisible(p)
+}
+
+# Batch across traits and export plots
+all_traits <- setdiff(names(blups_df), "Genotype")
+traits <- all_traits[vapply(all_traits, function(tr) paste0(tr, "_blue") %in% names(data), logical(1))]
+
+if (!dir.exists(cfg$out_dir)) dir.create(cfg$out_dir, recursive = TRUE, showWarnings = FALSE)
+
+for (tr in traits) {
+  message("→ Making plot for trait: ", tr)
+  p <- try(plot_blue_blup_hists(tr, cfg), silent = TRUE)
+  if (inherits(p, "try-error")) { message("   ❌ Skipping ", tr, " due to error."); next }
+
+  fname <- file.path(cfg$out_dir, sprintf("%s_hist_bin%s.png", tr, format(cfg$binwidth, trim = TRUE)))
+  ggplot2::ggsave(filename = fname, plot = p,
+                  width = cfg$width_in, height = cfg$height_in, dpi = cfg$dpi, units = "in")
+  message("   ✅ Saved: ", fname)
+}
+
+```
+
+```{r}
+
+####################
+## BLUP correlations
+####################
+
+# Convert BLUPs data (excluding Genotype column) to a matrix
+blups_matrix <- blups_df %>% select(-Genotype) %>% as.matrix()
+
+# Compute Pearson correlation matrix (phenotypic correlations)
+phenotypic_cor_matrix <- cor(blups_matrix, method = "pearson")
+
+write.csv(phenotypic_cor_matrix, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot.
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_corrplot.png", 
+    width = 1600, height = 1550) 
+
+# Sets margins around the plot - right margin leaves room for the legend
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme and number of gradient levels
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+```
+
+```{r}
+
+####################
+## BLUE correlations
+####################
+
+## 2021 THD
+
+# Read the CSV file
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD.csv", row.names = 1)
+
+# Convert all columns to numeric
+blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
+
+# Check the structure of the data
+str(blues)
+
+# Calculate the Pearson correlation matrix
+pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+
+# Save the Pearson correlation matrix to a CSV file
+write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_corrplot.png", 
+    width = 1600, height = 1600) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+
+## 2022 EL
+
+# Read the CSV file
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22EL.csv", row.names = 1)
+
+# Convert all columns to numeric
+blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
+
+# Check the structure of the data
+str(blues)
+
+# Calculate the Pearson correlation matrix
+pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+
+# Save the Pearson correlation matrix to a CSV file
+write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22EL_pheno_corr.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22EL_pheno_corr.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22EL_corrplot.png", 
+    width = 1000, height = 1000) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+
+## 2022 RL
+
+# Read the CSV file
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22RL.csv", row.names = 1)
+
+# Convert all columns to numeric
+blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
+
+# Check the structure of the data
+str(blues)
+
+# Calculate the Pearson correlation matrix
+pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+
+# Save the Pearson correlation matrix to a CSV file
+write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22RL_pheno_corr.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22RL_pheno_corr.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22RL_corrplot.png", 
+    width = 1000, height = 1000) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+
+## 2022 THD
+
+# Read the CSV file
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD.csv", row.names = 1)
+
+# Convert all columns to numeric
+blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
+
+# Check the structure of the data
+str(blues)
+
+# Calculate the Pearson correlation matrix
+pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+
+# Save the Pearson correlation matrix to a CSV file
+write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_corrplot.png", 
+    width = 1150, height = 1150) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+
+## 2023 RL
+
+# Read the CSV file
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23RL.csv", row.names = 1)
+
+# Convert all columns to numeric
+blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
+
+# Check the structure of the data
+str(blues)
+
+# Calculate the Pearson correlation matrix
+pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+
+# Save the Pearson correlation matrix to a CSV file
+write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23RL_pheno_corr.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23RL_pheno_corr.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23RL_corrplot.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+
+## 2023 THD
+
+# Read the CSV file
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD.csv", row.names = 1)
+
+# Convert all columns to numeric
+blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
+
+# Check the structure of the data
+str(blues)
+
+# Calculate the Pearson correlation matrix
+pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+
+# Save the Pearson correlation matrix to a CSV file
+write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr.csv", row.names = TRUE)
+
+# Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
+pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr.csv", row.names = 1)
+pheno_matrix <- as.matrix(pheno)  
+
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_corrplot.png", 
+    width = 1150, height = 1150) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+```
+
