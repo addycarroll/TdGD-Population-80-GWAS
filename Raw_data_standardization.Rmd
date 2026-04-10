@@ -1,0 +1,91 @@
+```{r}
+
+##################
+## Package loading 
+##################
+
+library(dplyr)
+
+```
+
+```{r}
+
+#######################################
+## Prepare raw data for standardization
+#######################################
+
+# Load raw data
+raw.data <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/TdGD80_raw.csv")
+
+# Convert specific columns to factors (categorical variables)
+factor_columns <- c("Environment", "PID", "Genotype", "Group", "Record")
+raw.data[factor_columns] <- lapply(raw.data[factor_columns], as.factor)
+
+# Identify remaining character columns to convert to numeric
+remaining_char_cols <- setdiff(names(raw.data)[sapply(raw.data, is.character)], factor_columns)
+
+# Convert remaining character columns to numeric
+raw.data[remaining_char_cols] <- lapply(raw.data[remaining_char_cols], as.numeric)
+
+# Check for NAs introduced during conversion (non-numeric characters became NA)
+na_check <- sapply(raw.data[remaining_char_cols], function(x) sum(is.na(x)))
+print("NAs introduced during conversion:")
+print(na_check)
+
+# Display the structure of the dataset to confirm changes
+str(raw.data)
+
+```
+
+```{r}
+
+###############################################################
+## For each numeric trait, report mean, std. dev., min, and max
+###############################################################
+
+# Generate summary statistics for all numeric traits
+numeric_cols <- sapply(raw.data, is.numeric) # Identify numeric columns
+summary_stats <- data.frame(
+  Trait = names(raw.data)[numeric_cols],
+  Min = sapply(raw.data[, numeric_cols], min, na.rm = TRUE),
+  Max = sapply(raw.data[, numeric_cols], max, na.rm = TRUE),
+  Mean = sapply(raw.data[, numeric_cols], mean, na.rm = TRUE),
+  SD = sapply(raw.data[, numeric_cols], sd, na.rm = TRUE)
+)
+
+# Print the summary statistics
+print("Summary statistics for numeric traits:")
+print(summary_stats)
+
+# Save summary statistics to a CSV file
+write.csv(summary_stats, "C:/Users/addyhope/OneDrive - Kansas State University/Blaine/Data standardization/summary stats_raw.csv")
+
+```
+
+```{r}
+
+###############################################
+## Standardize raw data within each environment
+###############################################
+
+# Specify the traits to standardize
+traits_to_standardize <- c("HD", "TC", "SD", "PH", "TW", "GP", "TKW", "KA", "KW", "KL", "SRC", "PQS", "GY", "GFP", "GPD", "B", "Na", "Mg", "Al", "P", "K", "Ca", "Fe", "Mn", "Co", "Ni", "Cu", "Zn", "As", "Se", "Rb", "Sr", "Mo", "Cd")
+
+# Standardize traits within each environment group
+raw.data <- raw.data %>%
+  group_by(Environment) %>%
+  mutate(across(all_of(traits_to_standardize), ~ scale(.)[, 1], .names = "std_{col}"))
+
+# Verify the standardized traits within each environment (mean = 0, SD = 1)
+standardization_check <- raw.data %>%
+  summarise(across(starts_with("std_"), list(mean = ~ mean(., na.rm = TRUE), sd = ~ sd(., na.rm = TRUE))))
+
+print("Verification of within-environment standardization:")
+print(standardization_check)
+
+# Save the final standardized dataset
+write.csv(raw.data, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Raw standardized data.csv")
+
+
+```
+
