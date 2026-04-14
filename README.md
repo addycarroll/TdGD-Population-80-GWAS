@@ -80,3 +80,29 @@
     - Pearson correlation matrix across traits
     - Correlation heatmap plot
 - For each environment-specific BLUE dataset, converts all trait columns to numeric, computes Pearson correlations, writes the matrix to a .csv, and generates a lower-triangle correlation plot with coefficients displayed on the output .png figure
+***
+## Genotypic data preparation
+**3. snpReady.Rmd:** Reformat SNP data, filter, and generate population genetic summaries 
+
+**3.1:**
+- INPUT: Raw genotyping results file
+- OUTPUT: Reformatted genotype table with cleaned sample names and retained marker metadata
+- PARAMETER MODIFICATION: Update the range of sample columns and the index used when parsing sample names from column headers
+- Reads the raw genotype table, subsets the sample columns and reformats sample names, recombining with marker metadata columns to produce a reformatted genotype table. Removes markers with unknown chromosome or position. Converts the genotype matrix to wide format for snpReady.
+
+**3.2:**
+- INPUT: Wide format genotype matrix from step 3.1
+- OUTPUT:
+  - Filtered matrix retaining informative markers with call rate > 0.9, marker heterozygosity < 0.1, and individual heterozygosity < 0.2
+  - Population genetic summary metrics
+- PARAMETER MODIFICATION: Update filtering thresholds as needed
+- Uses snpReady to filter matrix and generate population genetic summaries
+  - raw.data() with call.rate to filter
+  - popgen() to summarize marker, genotype, and population level statistics
+  - Use heterozygosity results from popgen() to create lists of markers and individuals to remove based off excess heterozygosity
+
+**3.3:**
+- INPUT: Marker and genotype summary statistics from step 3.2
+- OUTPUT: Histograms for MAF and heterozygosity
+- PARAMETER MODIFICATION: Update plot colors, axis limits, and threshold lines as needed
+- Generates histograms summarizing key marker and individual QC metrics, with threshold lines added to indicate cutoffs used during filtering
