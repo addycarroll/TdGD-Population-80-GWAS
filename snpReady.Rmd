@@ -1,0 +1,194 @@
+```{r}
+
+##################
+## Package loading
+##################
+
+library(snpReady)
+
+```
+
+```{r}
+
+######################################
+## Prepare genotypic data for snpReady
+######################################
+
+# Read the genotypic data 
+geno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/TdGD80 Genotyping results.csv", header = TRUE)  
+
+## Reformat sample names
+# Subset the genotype data 
+samples <- geno[, 10:374]  # This creates a dataframe with only sample columns
+# Adjust this range based on the structure of the new dataset
+
+# Extract column names of the samples
+col_names <- colnames(samples)
+
+# Split column names by "."
+split_col_names <- strsplit(col_names, "\\.")
+
+# Select relevant elements from split names (last seven elements, then remove the last three)
+split_col_names_1 <- lapply(split_col_names, function(x) x[7:length(x)])  # Adjust this index for the new dataset structure if necessary
+split_col_names_2 <- lapply(split_col_names_1, function(x) head(x, -3))  # Remove last three elements
+
+# Create new column names by joining remaining elements
+new_col_names <- sapply(split_col_names_2, function(x) paste(x, collapse = "."))
+
+# Assign new column names to the samples dataframe
+colnames(samples) <- new_col_names
+
+# Recombine the genotypic marker info (first 9 columns) with the newly renamed sample columns
+geno_2 <- as.data.frame(cbind(geno[, 1:9], samples))
+
+## Remove markers with unknown chromosome/position
+# Filter out rows where 'Pos' (position) is labeled as unknown (e.g., "Unk")
+# Ensure the "Pos" column exists in the new dataset and adjust accordingly
+geno_3 <- geno_2[geno_2$Pos != "Unk", , drop = FALSE]
+
+# Identify duplicate markers by checking for duplicates in the 'New_Marker' column or the first row
+duplicates <- duplicated(geno_3["New_Marker", ]) | duplicated(geno_3[1, ], fromLast = TRUE)
+
+# Print out the logical vector showing which rows are duplicates
+print(duplicates)
+
+# Export the cleaned dataset to a CSV file
+write.csv(geno_3, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/Pop80_Genotypic Matrix.csv", row.names = FALSE)  # Adjust path accordingly
+# Remove all columns except for Marker, REF, ALT, and sample columns
+
+
+## Preparing the wide format for snpReady
+
+# Read in the matrix file (generated previously)
+matrix <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/Pop80_Genotypic Matrix_done.csv", header = TRUE)
+
+# Remove unnecessary columns (e.g., REF, ALT) from the matrix if they exist
+# Adjust the column names if the new dataset has different or additional columns
+matrix_1 <- matrix[, !(names(matrix) %in% c("REF", "ALT"))]
+
+# Transpose the matrix for snpReady
+matrix_transpose <- t(matrix_1)
+
+# Save the transposed matrix as a text file for snpReady
+write.table(matrix_transpose, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/Pop80_snpReady matrix.txt", sep = "\t") # delete first row of text file
+
+```
+
+```{r}
+
+#########################################################################
+## Use snpReady to apply filtering and extract population summary metrics
+#########################################################################
+
+# Import the wide-format genotypic data
+wide <- read.table("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/Pop80_snpReady matrix.txt", head=T)
+
+# Set the first column as row names and remove it from the data frame
+row.names(wide) <- wide[,1]
+wide <- wide[, -1]
+
+## Remove non-informative markers
+# Filtering markers with minimum allele frequency (MAF) of 0.001
+inform_markers <- raw.data(data = as.matrix(wide), frame = "wide", base = FALSE, call.rate = 0, maf = .001, imput = FALSE)
+
+# Print the report showing how many markers were removed
+inform_markers$report
+
+# Extract the cleaned marker matrix
+inform_markers_matrix <- inform_markers$M.clean
+
+# Transpose and export matrix
+Matrix_transposed <- t(inform_markers_matrix)
+
+write.csv(Matrix_transposed, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/TdGD80 Informative markers.csv", row.names = TRUE)
+
+## Filter by call rate = 0.9
+# Apply a call rate filter of 0.9 and MAF of 0.001
+Callrate_0.9 <- raw.data(data = as.matrix(wide), frame = "wide", base = FALSE, call.rate = 0.9, maf = 0.001, imput = FALSE) 
+
+# Print the report showing markers removed by MAF and call rate
+Callrate_0.9$report
+
+# Extract the matrix with filtered markers
+Matrix_CR_0.9 <- Callrate_0.9$M.clean
+dim(Matrix_CR_0.9) # Check the dimensions of the filtered matrix
+
+
+## Population genetics analysis 
+# Perform population genetics analysis on the filtered matrix
+pop.gen <- popgen(M = Matrix_CR_0.9)
+
+# Extract key components from the population genetics results
+Markers_CR_0.9 <- pop.gen$whole$Markers
+Genotypes_CR_0.9 <- data.frame(pop.gen$whole$Genotypes)
+Population_CR_0.9 <- data.frame(pop.gen$whole$Population)
+Variability_CR_0.9 <- data.frame(pop.gen$whole$Variability)
+
+
+## Heterozygosity filtering
+# Genotype heterozygosity
+# Filter out individuals with heterozygosity levels above 0.2
+individuals_to_remove <- rownames(Genotypes_CR_0.9)[Genotypes_CR_0.9$Ho > 0.2]
+individuals_to_remove
+
+# Remove these individuals from the genotypic matrix
+Het_filter <- Matrix_CR_0.9[!rownames(Matrix_CR_0.9) %in% individuals_to_remove, ]
+
+# Marker heterozygosity
+# Filter out markers with heterozygosity levels above 0.1
+markers_to_remove <- rownames(Markers_CR_0.9)[Markers_CR_0.9$Ho > 0.1]
+length(markers_to_remove)
+
+# Remove these markers from the genotypic matrix
+Het_filter <- Het_filter[, !colnames(Het_filter) %in% markers_to_remove]
+
+# Transpose and export matrix
+Filtered_matrix <- t(Het_filter)
+
+write.csv(Filtered_matrix, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Genotyping/Other pops/Pop80/Pop80_Filtered matrix_CR_Het.csv", row.names = TRUE)
+
+```
+
+```{r}
+
+########################################################
+## Plot histograms of MAF and heterozygosity
+########################################################
+
+# Define custom colors
+col1 <- adjustcolor("#542788", alpha.f = 0.9)
+
+# Minor allele frequency
+hist(Markers_CR_0.9$MAF, breaks=seq(0,0.6, by=.025), main = "Pop 80 - Minor Allele Frequency", xlab = "Minor Allele Frequency (MAF)", ylab = "Number of markers", col = col1, border = "black")
+
+# Marker heterozygosity
+h_Ho <- hist(Markers_CR_0.9$Ho,
+             breaks = seq(0, 0.8, by = 0.025),
+             plot = FALSE)
+
+hist(Markers_CR_0.9$Ho,
+     breaks = seq(0, 0.8, by = 0.025),
+     main = "Pop 80 - Marker Heterozygosity",
+     xlab = "Marker Heterozygosity",
+     ylab = "Number of markers",
+     col = col1,
+     border = "black",
+     xlim = c(0, 0.6),
+     ylim = c(0, max(h_Ho$counts) * 1.1))
+# Optional threshold line
+abline(v = 0.1, lty = 2)
+
+## Individual Distribution
+# Heterozygosity
+hist(Genotypes_CR_0.9$Ho, 
+     breaks = seq(0, 0.6, by = 0.025), 
+     main = "Pop 80 - Individual Heterozygosity", 
+     xlab = "Individual Heterozygosity", 
+     ylab = "Number of WILs",
+     col = col1, 
+     border = "black")
+# Add dashed vertical line at 0.2
+abline(v = 0.2, lty = 2)
+
+```
+
