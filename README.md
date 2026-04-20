@@ -140,4 +140,33 @@
 - OUTPUT: GAPIT GWAS output files for BLUEs
 - PARAMETER MODIFICATION: Update the number of PCs included as covariates, the MAF threshold, and the set of GWAS models to run as needed
 - Loads the prepared BLUE phenotype and genotype files and runs GWAS in GAPIT using two principal components and a MAF threshold of 0.05. Analysis was run using the models Blink, MLM, and MLMM. Separate runs are performed for the broader BLUE trait set and the ionomics BLUEs.
+***
+**6. GWAS_summary.Rmd:** Replot Manhattan plots with donor proportion tracks and infer allelic effect direction
 
+**6.1:**
+- INPUT:
+  - Population mean donor proportion bins (details on how to obtain this can be found in my Introgression Mapping repository)
+  - GAPIT GWAS result directories
+- OUTPUT:
+  - For each GWAS results file, a two-track plot showing GWAS significance and mean donor proportion across 1 Mb bins
+  - Aggregate table of FDR significant hits across models and traits
+- PARAMETER MODIFICATION: Update plotting colors, dimensions, and significant threshold as needed. Change directories when running BLUEs vs BLUPs.
+- Reads the 1 Mb population mean donor proportion bins from the introgression mapping workflow and all detected GAPIT result files from the specified model directories. The script standardizes column names across GWAS results formats, computes FDR values, and rebuilds Manhattan plots using genomic positions. Each output figure contains two vertically stacked panels: an upper panel showing mean donor proportion across the genome, with bins containing significant hits highlighted, and a lower panel showing GWAS significance across all chromosomes. All FDR significant results are also collected into a single aggregate table across models and traits.
+
+**6.2:**
+- INPUT:
+  - Manually aggregated GWAS results tables
+  - Population mean donor proportion bins
+- OUTPUT: GWAS results tables augmented with the donor proportion summary for the corresponding 1 Mb bin
+- Reads aggregated GWAS hit tables and the population mean donor proportion table, parses chromosome and position from each SNP identifier, assigns each SNP to its corresponding 1 Mb bin, and joins the bin-level donor proportion summary onto the GWAS results table, producing a version in which each significant marker is annotated with the average donor proportion for its genomic interval.
+
+**6.3:**
+- INPUT:
+  - BLUE and BLUP output files from step 6.2
+  - Phenotype and genotype files used in steps 5.2 and 5.4
+- OUTPUT: Summary table including
+  - Number of WILs falling into each genotype class
+  - Mean phenotype values for each genotype class
+  - Inferred high and low allele
+  - Inferred RP and donor effect directions
+- For each GWAS hit, calculates mean phenotype values for the genotype classes defined by the REF and ALT alleles. Using the homozygote class means, infers which allele is associated with lower versus higher trait values. Compares those inferred allele effects to the parent allele calls to assign donor and RP directions of effect. Records genotype counts and counts matching parent genotype classes.
