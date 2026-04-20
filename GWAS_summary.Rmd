@@ -1,0 +1,1056 @@
+```{r}
+
+##################
+## Package loading
+##################
+
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+
+```
+
+```{r}
+
+#######################################################################################################################################
+## Recreate Manhattan plots using GAPIT results output
+# - An additional track on the plot is included to show average donor proportion in each 1 Mb bin that the markers used for GWAS are in
+#######################################################################################################################################
+
+bins_path <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Pop80_population_mean_bins.csv"
+
+# Directory where GWAS results files live
+# - Change to BLUP directories as needed
+model_dirs <- c(
+  BLINK = "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Blink_results_BLUE_filterWithinPop",
+  MLM   = "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/MLM_results_BLUE_filterWithinPop",
+  MLMM  = "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/MLMM_results_BLUE_filterWithinPop"
+)
+
+# Directory where plot file outputs will go
+# - Change to BLUP directory as needed
+out_dir <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Plots_replotted_BLUEs"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+agg_out_file <- file.path(out_dir, "GWAS_significant_hits_across_models_traits.csv")
+
+# Chromosomes
+CHRS <- c("chr1A","chr1B","chr1D",
+          "chr2A","chr2B","chr2D",
+          "chr3A","chr3B","chr3D",
+          "chr4A","chr4B","chr4D",
+          "chr5A","chr5B","chr5D",
+          "chr6A","chr6B","chr6D",
+          "chr7A","chr7B","chr7D")
+
+# Colors by subgenome
+subg_of <- function(x) factor(sub(".*([ABD])$", "\\1", x), levels = c("A","B","D"))
+pal3 <- c(A = "#1b9e77", B = "#d95f02", D = "#7570b3")
+
+# Plot dimension specifications
+donor_ymax <- 0.80
+png_width <- 2600
+png_height <- 1400
+png_res <- 200
+
+# FDR significance threshold to use
+fdr_alpha <- 0.05
+
+# Read bins file obtained during introgression mapping pipeline
+bins_raw <- read.csv(bins_path, stringsAsFactors = FALSE) %>%
+  mutate(
+    Chrom    = factor(as.character(Chrom), levels = CHRS),
+    Subg     = subg_of(Chrom),
+    StartMb  = Start / 1e6,
+    EndMb    = End   / 1e6,
+    CenterMb = (StartMb + EndMb) / 2
+  )
+
+chr_lengths <- bins_raw %>%
+  group_by(Chrom) %>%
+  summarise(chr_lenMb = max(EndMb, na.rm = TRUE), .groups = "drop") %>%
+  arrange(Chrom)
+
+chr_lengths$offsetMb <- c(0, cumsum(as.numeric(head(chr_lengths$chr_lenMb, -1))))
+axis_df <- transform(chr_lengths, centerMb = offsetMb + chr_lenMb / 2)
+xmax_totalMb <- max(chr_lengths$offsetMb + chr_lengths$chr_lenMb)
+
+bins_geom <- bins_raw %>%
+  left_join(chr_lengths[, c("Chrom", "offsetMb")], by = "Chrom") %>%
+  mutate(Pos_cumMb = CenterMb + offsetMb)
+
+# Helper functions
+extract_trait_from_file <- function(filepath, model_name) {
+  fname <- basename(filepath)
+  sub(
+    paste0("^GAPIT\\.Association\\.GWAS_Results\\.", model_name, "\\.(.+)\\.csv$"),
+    "\\1",
+    fname
+  )
+}
+
+standardize_gwas <- function(gwas, model_name, trait_name, filepath) {
+  if ("Chr" %in% names(gwas)) {
+    names(gwas)[names(gwas) == "Chr"] <- "Chrom"
+  }
+  if (!"Chrom" %in% names(gwas) && "SNP" %in% names(gwas)) {
+    gwas$Chrom <- sub("_.+$", "", gwas$SNP)
+  }
+
+  if (!"Pos" %in% names(gwas) && "Position" %in% names(gwas)) {
+    names(gwas)[names(gwas) == "Position"] <- "Pos"
+  }
+
+  if (!"MAF" %in% names(gwas) && "maf" %in% names(gwas)) {
+    names(gwas)[names(gwas) == "maf"] <- "MAF"
+  }
+
+  if (!"Effect" %in% names(gwas) && "effect" %in% names(gwas)) {
+    names(gwas)[names(gwas) == "effect"] <- "Effect"
+  }
+
+  if (!"P.value" %in% names(gwas)) {
+    stop("Missing P.value in: ", filepath)
+  }
+  if (!"Pos" %in% names(gwas)) {
+    stop("Missing Pos in: ", filepath)
+  }
+  if (!"Chrom" %in% names(gwas)) {
+    stop("Missing Chrom/Chr in: ", filepath)
+  }
+
+  gwas <- gwas %>%
+    mutate(
+      Model = model_name,
+      Trait = trait_name,
+      Chrom = as.character(Chrom),
+      Pos = suppressWarnings(as.numeric(Pos)),
+      P.value = suppressWarnings(as.numeric(P.value)),
+      MAF = if ("MAF" %in% names(.)) suppressWarnings(as.numeric(MAF)) else NA_real_,
+      Effect = if ("Effect" %in% names(.)) suppressWarnings(as.numeric(Effect)) else NA_real_,
+      H.B.P.Value = if ("H&B.P.Value" %in% names(.)) suppressWarnings(as.numeric(`H&B.P.Value`)) else NA_real_
+    )
+
+  gwas <- gwas %>%
+    filter(
+      !is.na(Chrom),
+      !is.na(Pos),
+      !is.na(P.value),
+      P.value > 0,
+      P.value <= 1,
+      Chrom %in% CHRS
+    )
+
+  if (nrow(gwas) == 0) return(gwas)
+
+  gwas <- gwas %>%
+    arrange(P.value) %>%
+    mutate(
+      BH_FDR = p.adjust(P.value, method = "BH"),
+      FDR_sig = BH_FDR <= fdr_alpha
+    )
+
+  gwas
+}
+
+plot_two_track <- function(gwas_std, title_lab, outfile_png) {
+  if (nrow(gwas_std) == 0) {
+    message("Skip empty GWAS table: ", title_lab)
+    return(invisible(NULL))
+  }
+
+  gwas2 <- gwas_std %>%
+    mutate(
+      Chrom = factor(Chrom, levels = CHRS),
+      Subg = subg_of(Chrom),
+      PosMb = Pos / 1e6,
+      neglog10P = -log10(P.value)
+    ) %>%
+    left_join(chr_lengths[, c("Chrom", "offsetMb")], by = "Chrom") %>%
+    mutate(Pos_cumMb = PosMb + offsetMb)
+
+  # FDR line based on largest raw p-value among BH-significant SNPs
+  if (any(gwas2$FDR_sig, na.rm = TRUE)) {
+    fdr_p <- max(gwas2$P.value[gwas2$FDR_sig], na.rm = TRUE)
+    fdr_y <- -log10(fdr_p)
+  } else {
+    fdr_p <- NA_real_
+    fdr_y <- NA_real_
+  }
+
+  sig_df <- gwas2 %>% filter(FDR_sig)
+
+  donor_hits <- NULL
+  if (nrow(sig_df) > 0) {
+    sig_bins <- sig_df %>%
+      mutate(
+        Start = floor(Pos / 1e6) * 1e6,
+        End = Start + 999999
+      ) %>%
+      distinct(Chrom, Start, End)
+
+    donor_hits <- bins_geom %>%
+      inner_join(sig_bins, by = c("Chrom", "Start", "End"))
+  }
+
+  p_donor <- ggplot() +
+    geom_point(
+      data = bins_geom,
+      aes(x = Pos_cumMb, y = WE_prop_mean, colour = Subg),
+      size = 0.7, alpha = 0.3
+    ) +
+    {
+      if (!is.null(donor_hits) && nrow(donor_hits) > 0)
+        geom_point(
+          data = donor_hits,
+          aes(x = Pos_cumMb, y = WE_prop_mean, fill = Subg),
+          shape = 21, size = 2, stroke = 1.1, color = "black", alpha = 1
+        )
+      else NULL
+    } +
+    scale_colour_manual(values = pal3, guide = "none") +
+    scale_fill_manual(values = pal3, guide = "none") +
+    scale_x_continuous(
+      limits = c(0, xmax_totalMb),
+      breaks = axis_df$centerMb,
+      labels = gsub("^chr", "", axis_df$Chrom)
+    ) +
+    scale_y_continuous(
+      limits = c(0, donor_ymax),
+      breaks = seq(0, donor_ymax, 0.1),
+      name = "Mean donor proportion"
+    ) +
+    labs(title = title_lab) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.title.x = element_blank()
+    )
+
+  ymax_gwas <- max(gwas2$neglog10P[is.finite(gwas2$neglog10P)], na.rm = TRUE)
+  ymax_gwas <- max(ymax_gwas * 1.05, ifelse(is.finite(fdr_y), fdr_y * 1.05, 0))
+
+  p_gwas <- ggplot(gwas2, aes(x = Pos_cumMb, y = neglog10P)) +
+    geom_point(aes(color = Subg), alpha = 0.25, size = 0.8) +
+    geom_point(data = sig_df, aes(color = Subg), size = 2.0, alpha = 1) +
+    scale_colour_manual(values = pal3, guide = "none") +
+    scale_x_continuous(
+      limits = c(0, xmax_totalMb),
+      breaks = axis_df$centerMb,
+      labels = gsub("^chr", "", axis_df$Chrom)
+    ) +
+    scale_y_continuous(
+      limits = c(0, ymax_gwas),
+      name = expression(-log[10](p))
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.title.x = element_blank()
+    )
+
+  if (is.finite(fdr_y)) {
+    p_gwas <- p_gwas +
+      geom_hline(yintercept = fdr_y, linetype = "dashed", color = "grey30")
+  }
+
+  pg <- cowplot::plot_grid(
+    p_donor, p_gwas,
+    ncol = 1,
+    align = "v",
+    rel_heights = c(1, 2)
+  )
+
+  png(outfile_png, width = png_width, height = png_height, res = png_res, type = "cairo")
+  print(pg)
+  dev.off()
+
+  message(
+    "✔ Wrote: ", outfile_png,
+    " | fdr_p=", ifelse(is.finite(fdr_p), signif(fdr_p, 6), NA),
+    " | n_FDR=", sum(gwas2$FDR_sig, na.rm = TRUE)
+  )
+
+  invisible(NULL)
+}
+
+# Detect all results files from GAPIT
+file_index_list <- lapply(names(model_dirs), function(m) {
+  these_files <- list.files(
+    model_dirs[[m]],
+    pattern = paste0("^GAPIT\\.Association\\.GWAS_Results\\.", m, "\\..+\\.csv$"),
+    full.names = TRUE
+  )
+
+  if (length(these_files) == 0) {
+    return(NULL)
+  }
+
+  data.frame(
+    Model = m,
+    File = these_files,
+    Trait = vapply(these_files, extract_trait_from_file, character(1), model_name = m),
+    stringsAsFactors = FALSE
+  )
+})
+
+file_index <- do.call(rbind, file_index_list)
+
+if (is.null(file_index) || nrow(file_index) == 0) {
+  stop("No GWAS result files found in the model directories.")
+}
+
+file_index <- file_index %>%
+  arrange(Model, Trait)
+
+cat("Found", nrow(file_index), "GWAS result files.\n")
+
+# Main loop across traits
+sig_list <- vector("list", nrow(file_index))
+
+for (i in seq_len(nrow(file_index))) {
+  this_model <- file_index$Model[i]
+  this_trait <- file_index$Trait[i]
+  this_file  <- file_index$File[i]
+
+  cat("Processing", i, "of", nrow(file_index), ":", this_model, this_trait, "\n")
+
+  gwas_raw <- read.csv(this_file, stringsAsFactors = FALSE, check.names = FALSE)
+  gwas_std <- standardize_gwas(
+    gwas = gwas_raw,
+    model_name = this_model,
+    trait_name = this_trait,
+    filepath = this_file
+  )
+
+  if (nrow(gwas_std) == 0) {
+    sig_list[[i]] <- NULL
+    next
+  }
+
+  out_png <- file.path(
+    out_dir,
+    paste0(this_model, "_", this_trait, "_twoTrack_FDR.png")
+  )
+
+  plot_two_track(
+    gwas_std = gwas_std,
+    title_lab = paste0(this_model, ".", this_trait),
+    outfile_png = out_png
+  )
+
+  sig_hits <- gwas_std %>%
+    filter(FDR_sig)
+
+  keep_cols <- c(
+    "Model", "Trait", "SNP", "Chrom", "Pos", "P.value", "BH_FDR", "H.B.P.Value",
+    "MAF", "nobs", "Effect"
+  )
+  keep_cols <- keep_cols[keep_cols %in% names(sig_hits)]
+
+  sig_list[[i]] <- sig_hits[, keep_cols, drop = FALSE]
+}
+
+# Save aggregated table with significant results
+sig_table <- do.call(rbind, sig_list)
+
+if (!is.null(sig_table) && nrow(sig_table) > 0) {
+  sig_table <- sig_table %>%
+    arrange(Model, Trait, P.value)
+
+  write.csv(sig_table, agg_out_file, row.names = FALSE)
+
+  cat("Done.\n")
+  cat("Aggregated significant hits written to:\n", agg_out_file, "\n")
+  cat("Total significant rows:", nrow(sig_table), "\n")
+} else {
+  cat("Done, but no FDR-significant SNPs were found.\n")
+}
+
+```
+
+```{r}
+
+###############################################################################
+## For each significant GWAS SNP, append donor proportions within each 1 Mb bin
+###############################################################################
+
+# GWAS_results_BLUPs and _BLUEs are manual aggregates using PVE files from GAPIT outputs
+# - REF, ALT, and RP and donor allelic states are added using simple VLOOKUP function in excel using HapMap and parent sequencing information
+
+## BLUPs
+
+# Read results and mean donor proportions files
+gwas <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/GWAS_results_BLUPs.csv", stringsAsFactors=FALSE)
+bins <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Pop80_population_mean_bins.csv", stringsAsFactors=FALSE)
+
+# Split the SNP column into Chrom and numeric Position
+gwas <- gwas %>%
+  mutate(
+    Chrom = sub("_(.*)", "", SNP),
+    Pos   = as.numeric(sub(".*_", "", SNP))
+  )
+
+# Compute the bin start for each SNP (integer division by 1 Mb)
+gwas <- gwas %>%
+  mutate(
+    Start = floor(Pos / 1e6) * 1e6,
+    End   = Start + 999999
+  )
+
+# Join with the bin table on Chrom + Start + End
+gwas_donor <- gwas %>%
+  left_join(bins, by=c("Chrom","Start","End"))
+
+write.csv(gwas_donor, "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/GWAS_results_BLUPs_DonorProp.csv", row.names = FALSE)
+
+
+## BLUEs
+
+gwas <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/GWAS_results_BLUEs.csv", stringsAsFactors=FALSE)
+bins <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Pop80_population_mean_bins.csv", stringsAsFactors=FALSE)
+
+# Split the SNP column into Chrom and numeric Position
+gwas <- gwas %>%
+  mutate(
+    Chrom = sub("_(.*)", "", SNP),
+    Pos   = as.numeric(sub(".*_", "", SNP))
+  )
+
+# Compute the bin start for each SNP
+gwas <- gwas %>%
+  mutate(
+    Start = floor(Pos / 1e6) * 1e6,
+    End   = Start + 999999
+  )
+
+# Join with the bin table on Chrom + Start + End
+gwas_donor <- gwas %>%
+  left_join(bins, by=c("Chrom","Start","End"))
+
+write.csv(gwas_donor, "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/GWAS_results_BLUEs_DonorProp.csv", row.names = FALSE)
+
+```
+
+```{r}
+
+#####################################################################################
+## Determine directions of allelic and donor effects for each significant association
+#####################################################################################
+
+## BLUPs
+
+# File paths
+gwas_file  <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/GWAS_results_BLUPs_DonorProp.csv"
+pheno_file <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/Pheno_GWAS.txt" # input phenotypic file for GWAS
+geno_file  <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/Geno_GWAS.txt" # input genotypic file for GWAS
+
+out_file   <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/GWAS_effect_direction_summary.csv"
+
+# Load files
+gwas  <- read.csv(gwas_file, stringsAsFactors = FALSE, check.names = FALSE)
+pheno <- read.table(pheno_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+geno  <- read.table(geno_file,  header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+
+str(pheno)
+
+cat("GWAS rows:", nrow(gwas), "\n")
+cat("Pheno rows:", nrow(pheno), "\n")
+cat("Geno rows:", nrow(geno), "\n")
+
+if (!"Taxa" %in% colnames(pheno)) {
+  stop("Pheno file must contain a column named 'Taxa'")
+}
+
+if (!"rs" %in% colnames(geno)) {
+  stop("Geno file must contain a column named 'rs'")
+}
+
+# Helper functions
+# Convert genotype strings like "C/C" to "CC"
+clean_parent_call <- function(x) {
+  x <- gsub("/", "", x)
+  x <- gsub("\\s+", "", x)
+  x[x == "" | is.na(x)] <- NA
+  x
+}
+
+# Standardize genotype calls so heterozygotes are alphabetical
+# e.g. "GA" -> "AG", "C/T" -> "CT"
+standardize_genotype <- function(x) {
+  x <- gsub("/", "", x)
+  x <- gsub("\\s+", "", x)
+  
+  out <- rep(NA_character_, length(x))
+  
+  for (i in seq_along(x)) {
+    xi <- x[i]
+    
+    if (is.na(xi) || xi %in% c("NN", "N", "", "--")) {
+      out[i] <- NA
+    } else if (nchar(xi) != 2) {
+      out[i] <- NA
+    } else {
+      alle <- strsplit(xi, "")[[1]]
+      out[i] <- paste(sort(alle), collapse = "")
+    }
+  }
+  
+  out
+}
+
+make_genotype_labels <- function(ref, alt) {
+  ref <- gsub("/", "", ref)
+  alt <- gsub("/", "", alt)
+  
+  hom_ref <- paste0(ref, ref)
+  hom_alt <- paste0(alt, alt)
+  het     <- paste(sort(c(ref, alt)), collapse = "")
+  
+  list(hom_ref = hom_ref, het = het, hom_alt = hom_alt)
+}
+
+
+## Main loop
+results_list <- vector("list", nrow(gwas))
+
+for (i in seq_len(nrow(gwas))) {
+  
+  hit <- gwas[i, ]
+  
+  snp_id <- hit$SNP
+  trait  <- hit$Trait
+  
+  cat("Processing", i, "of", nrow(gwas), ":", snp_id, trait, "\n")
+  
+  # Check trait exists in phenotype file
+  if (!trait %in% colnames(pheno)) {
+    results_list[[i]] <- data.frame(
+      SNP = snp_id,
+      Trait = trait,
+      Model = hit$Model,
+      REF = hit$REF,
+      ALT = hit$ALT,
+      RP = hit$RP,
+      Donor = hit$Donor,
+      N = NA,
+      Mean_REFREF = NA,
+      Mean_HET = NA,
+      Mean_ALTALT = NA,
+      Allele_low = NA,
+      Allele_high = NA,
+      RP_direction = NA,
+      Donor_direction = NA,
+      Note = "Trait not found in phenotype file",
+      stringsAsFactors = FALSE
+    )
+    next
+  }
+  
+  # Find SNP in genotype file
+  snp_row <- geno[geno$rs == snp_id, ]
+  
+  if (nrow(snp_row) == 0) {
+    results_list[[i]] <- data.frame(
+      SNP = snp_id,
+      Trait = trait,
+      Model = hit$Model,
+      REF = hit$REF,
+      ALT = hit$ALT,
+      RP = hit$RP,
+      Donor = hit$Donor,
+      N = NA,
+      Mean_REFREF = NA,
+      Mean_HET = NA,
+      Mean_ALTALT = NA,
+      Allele_low = NA,
+      Allele_high = NA,
+      RP_direction = NA,
+      Donor_direction = NA,
+      Note = "SNP not found in genotype file",
+      stringsAsFactors = FALSE
+    )
+    next
+  }
+  
+  # If duplicated, keep first and note it
+  note_text <- ""
+  if (nrow(snp_row) > 1) {
+    snp_row <- snp_row[1, , drop = FALSE]
+    note_text <- "Duplicate SNP rows in genotype file; first row used"
+  }
+  
+  # Extract genotype calls
+  geno_calls <- snp_row[, !(colnames(snp_row) %in% c(
+    "rs", "alleles", "chrom", "pos", "strand", "assembly",
+    "center", "protLSID", "assayLSID", "panel", "Qccode"
+  )), drop = FALSE]
+  
+  # Convert one SNP row to long format
+  geno_df <- data.frame(
+    Taxa = colnames(geno_calls),
+    Genotype = as.character(geno_calls[1, ]),
+    stringsAsFactors = FALSE
+  )
+  
+  geno_df$Genotype <- standardize_genotype(geno_df$Genotype)
+  
+  # Pull phenotype
+  pheno_df <- data.frame(
+    Taxa = pheno$Taxa,
+    Pheno = pheno[[trait]],
+    stringsAsFactors = FALSE
+  )
+  
+  # Merge
+  dat <- merge(pheno_df, geno_df, by = "Taxa", all = FALSE)
+  dat <- dat[!is.na(dat$Pheno) & !is.na(dat$Genotype), ]
+  
+  # Build genotype labels from REF/ALT
+  ref_allele <- hit$REF
+  alt_allele <- hit$ALT
+  labs <- make_genotype_labels(ref_allele, alt_allele)
+  
+  # Means by expected genotype class
+  mean_refref <- if (any(dat$Genotype == labs$hom_ref)) {
+    mean(dat$Pheno[dat$Genotype == labs$hom_ref], na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  mean_het <- if (any(dat$Genotype == labs$het)) {
+    mean(dat$Pheno[dat$Genotype == labs$het], na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  mean_altalt <- if (any(dat$Genotype == labs$hom_alt)) {
+    mean(dat$Pheno[dat$Genotype == labs$hom_alt], na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  # Infer lower/higher allele from homozygote means only
+  allele_low  <- NA
+  allele_high <- NA
+  
+  if (!is.na(mean_refref) && !is.na(mean_altalt)) {
+    if (mean_refref < mean_altalt) {
+      allele_low  <- ref_allele
+      allele_high <- alt_allele
+    } else if (mean_altalt < mean_refref) {
+      allele_low  <- alt_allele
+      allele_high <- ref_allele
+    } else {
+      allele_low  <- "Equal"
+      allele_high <- "Equal"
+    }
+  }
+  
+  # RP / donor direction
+  rp_call    <- clean_parent_call(hit$RP)
+  donor_call <- clean_parent_call(hit$Donor)
+  
+  rp_direction <- NA
+  donor_direction <- NA
+  
+  rp_allele <- NA
+  donor_allele <- NA
+  
+  if (!is.na(rp_call) && nchar(rp_call) == 2) {
+    rp_allele <- substr(rp_call, 1, 1)
+    if (!is.na(allele_high) && rp_allele == allele_high) rp_direction <- "Increase"
+    if (!is.na(allele_low)  && rp_allele == allele_low)  rp_direction <- "Decrease"
+    if (!is.na(allele_high) && !is.na(allele_low) && allele_high == "Equal" && allele_low == "Equal") {
+      rp_direction <- "Equal"
+    }
+  }
+  
+  if (!is.na(donor_call) && nchar(donor_call) == 2) {
+    donor_allele <- substr(donor_call, 1, 1)
+    if (!is.na(allele_high) && donor_allele == allele_high) donor_direction <- "Increase"
+    if (!is.na(allele_low)  && donor_allele == allele_low)  donor_direction <- "Decrease"
+    if (!is.na(allele_high) && !is.na(allele_low) && allele_high == "Equal" && allele_low == "Equal") {
+      donor_direction <- "Equal"
+    }
+  }
+  
+  # If RP and donor carry the same allele, donor direction is not interpretable
+  if (!is.na(rp_allele) && !is.na(donor_allele) && rp_allele == donor_allele) {
+    donor_direction <- NA
+  }
+  
+  # Counts by genotype class
+  n_refref <- sum(dat$Genotype == labs$hom_ref, na.rm = TRUE)
+  n_het    <- sum(dat$Genotype == labs$het, na.rm = TRUE)
+  n_altalt <- sum(dat$Genotype == labs$hom_alt, na.rm = TRUE)
+  
+  # Counts matching parental genotype classes exactly
+  n_match_RP <- if (!is.na(rp_call)) {
+    sum(dat$Genotype == rp_call, na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  n_match_Donor <- if (!is.na(donor_call)) {
+    sum(dat$Genotype == donor_call, na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  results_list[[i]] <- data.frame(
+    SNP = snp_id,
+    Trait = trait,
+    Model = hit$Model,
+    Chromosome = hit$Chrom,
+    Position = hit$Pos,
+    P.value = hit$P.value,
+    maf = hit$MAF,
+    effect = hit$Effect,
+    REF = ref_allele,
+    ALT = alt_allele,
+    RP = hit$RP,
+    Donor = hit$Donor,
+    N = nrow(dat),
+    N_REFREF = n_refref,
+    N_HET = n_het,
+    N_ALTALT = n_altalt,
+    N_match_RP = n_match_RP,
+    N_match_Donor = n_match_Donor,
+    Mean_REFREF = mean_refref,
+    Mean_HET = mean_het,
+    Mean_ALTALT = mean_altalt,
+    Allele_low = allele_low,
+    Allele_high = allele_high,
+    RP_direction = rp_direction,
+    Donor_direction = donor_direction,
+    Note = note_text,
+    stringsAsFactors = FALSE
+  )
+}
+
+results <- do.call(rbind, results_list)
+
+
+## Save results
+write.csv(results, out_file, row.names = FALSE)
+
+cat("Done.\n")
+cat("Output written to:\n", out_file, "\n")
+
+# Note: when RP and donor have the same allele, direction of donor effect cannot be unambiguously determined. This code will always try to assign a donor direction, even if the RP is missing an allele call. I manually fixed this by going in and changing to NA any effect directions where RP and donor were ambiguous or where allele calls in parents didn't match REF/ALT from array SNPs used in GWAS.
+
+
+## BLUEs
+
+# File paths
+gwas_file   <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/GWAS_results_BLUEs_DonorProp.csv"
+pheno_file1 <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/Pheno_BLUEs_GWAS.txt"
+pheno_file2 <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/Pheno_BLUEs_ionomics_GWAS.txt"
+geno_file   <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/Geno_GWAS.txt"
+
+out_file    <- "C:/Users/addyhope/OneDrive - Kansas State University/Population Info/GWAS_withinPopIntroMap/Effect_direction/GWAS_effect_direction_summary_BLUEs.csv"
+
+# Load files
+gwas   <- read.csv(gwas_file, stringsAsFactors = FALSE, check.names = FALSE)
+pheno1 <- read.table(pheno_file1, header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+pheno2 <- read.table(pheno_file2, header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+geno   <- read.table(geno_file,  header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+
+# Merge phenotype files (separate ionomics file)
+if (!"Taxa" %in% colnames(pheno1)) stop("Pheno_BLUEs_GWAS.txt must contain 'Taxa'")
+if (!"Taxa" %in% colnames(pheno2)) stop("Pheno_BLUEs_ionomics_GWAS.txt must contain 'Taxa'")
+
+# Prevent duplicate trait columns
+common_cols <- intersect(colnames(pheno1), colnames(pheno2))
+common_cols <- setdiff(common_cols, "Taxa")
+
+if (length(common_cols) > 0) {
+  cat("Overlapping non-Taxa columns found:\n")
+  print(common_cols)
+}
+
+pheno2_only <- pheno2[, setdiff(colnames(pheno2), common_cols), drop = FALSE]
+pheno <- merge(pheno1, pheno2_only, by = "Taxa", all = TRUE)
+
+# Force all phenotype columns to numeric
+pheno_cols <- setdiff(colnames(pheno), "Taxa")
+pheno[pheno_cols] <- lapply(pheno[pheno_cols], function(x) as.numeric(trimws(as.character(x))))
+
+cat("GWAS rows:", nrow(gwas), "\n")
+cat("Pheno 1 rows:", nrow(pheno1), "\n")
+cat("Pheno 2 rows:", nrow(pheno2), "\n")
+cat("Merged pheno rows:", nrow(pheno), "\n")
+cat("Geno rows:", nrow(geno), "\n")
+
+if (!"rs" %in% colnames(geno)) {
+  stop("Geno file must contain a column named 'rs'")
+}
+
+# Helper functions
+clean_parent_call <- function(x) {
+  x <- gsub("/", "", x)
+  x <- gsub("\\s+", "", x)
+  x[x == "" | is.na(x)] <- NA
+  x
+}
+
+standardize_genotype <- function(x) {
+  x <- gsub("/", "", x)
+  x <- gsub("\\s+", "", x)
+  
+  out <- rep(NA_character_, length(x))
+  
+  for (i in seq_along(x)) {
+    xi <- x[i]
+    
+    if (is.na(xi) || xi %in% c("NN", "N", "", "--")) {
+      out[i] <- NA
+    } else if (nchar(xi) != 2) {
+      out[i] <- NA
+    } else {
+      alle <- strsplit(xi, "")[[1]]
+      out[i] <- paste(sort(alle), collapse = "")
+    }
+  }
+  
+  out
+}
+
+make_genotype_labels <- function(ref, alt) {
+  ref <- gsub("/", "", ref)
+  alt <- gsub("/", "", alt)
+  
+  hom_ref <- paste0(ref, ref)
+  hom_alt <- paste0(alt, alt)
+  het     <- paste(sort(c(ref, alt)), collapse = "")
+  
+  list(hom_ref = hom_ref, het = het, hom_alt = hom_alt)
+}
+
+# Main loop
+results_list <- vector("list", nrow(gwas))
+
+for (i in seq_len(nrow(gwas))) {
+  
+  hit <- gwas[i, ]
+  
+  snp_id <- hit$SNP
+  trait  <- hit$Trait
+  
+  cat("Processing", i, "of", nrow(gwas), ":", snp_id, trait, "\n")
+  
+  if (!trait %in% colnames(pheno)) {
+    results_list[[i]] <- data.frame(
+      SNP = snp_id,
+      Trait = trait,
+      Model = hit$Model,
+      REF = hit$REF,
+      ALT = hit$ALT,
+      RP = hit$RP,
+      Donor = hit$Donor,
+      N = NA,
+      N_REFREF = NA,
+      N_HET = NA,
+      N_ALTALT = NA,
+      N_match_RP = NA,
+      N_match_Donor = NA,
+      Mean_REFREF = NA,
+      Mean_HET = NA,
+      Mean_ALTALT = NA,
+      Allele_low = NA,
+      Allele_high = NA,
+      RP_direction = NA,
+      Donor_direction = NA,
+      Note = "Trait not found in merged phenotype file",
+      stringsAsFactors = FALSE
+    )
+    next
+  }
+  
+  snp_row <- geno[geno$rs == snp_id, ]
+  
+  if (nrow(snp_row) == 0) {
+    results_list[[i]] <- data.frame(
+      SNP = snp_id,
+      Trait = trait,
+      Model = hit$Model,
+      REF = hit$REF,
+      ALT = hit$ALT,
+      RP = hit$RP,
+      Donor = hit$Donor,
+      N = NA,
+      N_REFREF = NA,
+      N_HET = NA,
+      N_ALTALT = NA,
+      N_match_RP = NA,
+      N_match_Donor = NA,
+      Mean_REFREF = NA,
+      Mean_HET = NA,
+      Mean_ALTALT = NA,
+      Allele_low = NA,
+      Allele_high = NA,
+      RP_direction = NA,
+      Donor_direction = NA,
+      Note = "SNP not found in genotype file",
+      stringsAsFactors = FALSE
+    )
+    next
+  }
+  
+  note_text <- ""
+  if (nrow(snp_row) > 1) {
+    snp_row <- snp_row[1, , drop = FALSE]
+    note_text <- "Duplicate SNP rows in genotype file; first row used"
+  }
+  
+  geno_calls <- snp_row[, !(colnames(snp_row) %in% c(
+    "rs", "alleles", "chrom", "pos", "strand", "assembly",
+    "center", "protLSID", "assayLSID", "panel", "Qccode"
+  )), drop = FALSE]
+  
+  geno_df <- data.frame(
+    Taxa = colnames(geno_calls),
+    Genotype = as.character(geno_calls[1, ]),
+    stringsAsFactors = FALSE
+  )
+  
+  geno_df$Genotype <- standardize_genotype(geno_df$Genotype)
+  
+  pheno_df <- data.frame(
+    Taxa = pheno$Taxa,
+    Pheno = pheno[[trait]],
+    stringsAsFactors = FALSE
+  )
+  
+  dat <- merge(pheno_df, geno_df, by = "Taxa", all = FALSE)
+  dat$Pheno <- as.numeric(trimws(as.character(dat$Pheno)))
+  dat <- dat[!is.na(dat$Pheno) & !is.na(dat$Genotype), ]
+  
+  ref_allele <- hit$REF
+  alt_allele <- hit$ALT
+  labs <- make_genotype_labels(ref_allele, alt_allele)
+  
+  mean_refref <- if (any(dat$Genotype == labs$hom_ref)) {
+    mean(dat$Pheno[dat$Genotype == labs$hom_ref], na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  mean_het <- if (any(dat$Genotype == labs$het)) {
+    mean(dat$Pheno[dat$Genotype == labs$het], na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  mean_altalt <- if (any(dat$Genotype == labs$hom_alt)) {
+    mean(dat$Pheno[dat$Genotype == labs$hom_alt], na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  allele_low  <- NA
+  allele_high <- NA
+  
+  if (!is.na(mean_refref) && !is.na(mean_altalt)) {
+    if (mean_refref < mean_altalt) {
+      allele_low  <- ref_allele
+      allele_high <- alt_allele
+    } else if (mean_altalt < mean_refref) {
+      allele_low  <- alt_allele
+      allele_high <- ref_allele
+    } else {
+      allele_low  <- "Equal"
+      allele_high <- "Equal"
+    }
+  }
+  
+  rp_call    <- clean_parent_call(hit$RP)
+  donor_call <- clean_parent_call(hit$Donor)
+  
+  rp_direction <- NA
+  donor_direction <- NA
+  
+  rp_allele <- NA
+  donor_allele <- NA
+  
+  if (!is.na(rp_call) && nchar(rp_call) == 2) {
+    rp_allele <- substr(rp_call, 1, 1)
+    if (!is.na(allele_high) && rp_allele == allele_high) rp_direction <- "Increase"
+    if (!is.na(allele_low)  && rp_allele == allele_low)  rp_direction <- "Decrease"
+    if (!is.na(allele_high) && !is.na(allele_low) && allele_high == "Equal" && allele_low == "Equal") {
+      rp_direction <- "Equal"
+    }
+  }
+  
+  if (!is.na(donor_call) && nchar(donor_call) == 2) {
+    donor_allele <- substr(donor_call, 1, 1)
+    if (!is.na(allele_high) && donor_allele == allele_high) donor_direction <- "Increase"
+    if (!is.na(allele_low)  && donor_allele == allele_low)  donor_direction <- "Decrease"
+    if (!is.na(allele_high) && !is.na(allele_low) && allele_high == "Equal" && allele_low == "Equal") {
+      donor_direction <- "Equal"
+    }
+  }
+  
+  if (!is.na(rp_allele) && !is.na(donor_allele) && rp_allele == donor_allele) {
+    donor_direction <- NA
+  }
+  
+  n_refref <- sum(dat$Genotype == labs$hom_ref, na.rm = TRUE)
+  n_het    <- sum(dat$Genotype == labs$het, na.rm = TRUE)
+  n_altalt <- sum(dat$Genotype == labs$hom_alt, na.rm = TRUE)
+  
+  n_match_RP <- if (!is.na(rp_call)) {
+    sum(dat$Genotype == rp_call, na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  n_match_Donor <- if (!is.na(donor_call)) {
+    sum(dat$Genotype == donor_call, na.rm = TRUE)
+  } else {
+    NA
+  }
+  
+  results_list[[i]] <- data.frame(
+    SNP = snp_id,
+    Trait = trait,
+    Model = hit$Model,
+    Chromosome = hit$Chrom,
+    Position = hit$Pos,
+    P.value = hit$P.value,
+    maf = hit$MAF,
+    effect = hit$Effect,
+    REF = ref_allele,
+    ALT = alt_allele,
+    RP = hit$RP,
+    Donor = hit$Donor,
+    N = nrow(dat),
+    N_REFREF = n_refref,
+    N_HET = n_het,
+    N_ALTALT = n_altalt,
+    N_match_RP = n_match_RP,
+    N_match_Donor = n_match_Donor,
+    Mean_REFREF = mean_refref,
+    Mean_HET = mean_het,
+    Mean_ALTALT = mean_altalt,
+    Allele_low = allele_low,
+    Allele_high = allele_high,
+    RP_direction = rp_direction,
+    Donor_direction = donor_direction,
+    Note = note_text,
+    stringsAsFactors = FALSE
+  )
+}
+
+results <- do.call(rbind, results_list)
+
+write.csv(results, out_file, row.names = FALSE)
+
+cat("Done.\n")
+cat("Output written to:\n", out_file, "\n")
+
+```
