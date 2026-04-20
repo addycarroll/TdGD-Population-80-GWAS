@@ -106,3 +106,38 @@
 - OUTPUT: Histograms for MAF and heterozygosity
 - PARAMETER MODIFICATION: Update plot colors, axis limits, and threshold lines as needed
 - Generates histograms summarizing key marker and individual QC metrics, with threshold lines added to indicate cutoffs used during filtering
+***
+**4. Hapmap_convert.Rmd:** Convert genotypic data from numeric to HapMap format
+- INPUT: Filtered genotypic matrix from step 3
+- OUTPUT: HapMap formatted genotype table
+- Extracts the REF and ALT columns, identifies all sample columns, and loops across samples to convert numeric genotypes into allele-based strings using marker-specific reference and alternate alleles
+***
+## GWAS
+**5. GWAS_Introg.Map_BLUPs_BLUEs:** Run GWAS using GAPIT on BLUPs and BLUEs
+
+**5.1:**
+- INPUT:
+  - BLUP phenotype table (step 2.3)
+  - HapMap genotype table (step 4)
+- OUTPUT: Phenotypic and genotypic files prepared for GAPIT input, filtered to contain the same individuals
+- Identifies the set of shared individuals shared between the phenotypic and genotypic files, and filters the files to include only shared individuals
+
+**5.2:**
+- INPUT: Genotypic and phenotypic files from step 5.1
+- OUTPUT: GAPIT GWAS output files for BLUPs
+- PARAMETER MODIFICATION: Update the number of PCs included as covariates, the MAF threshold, and the set of GWAS models to run as needed
+- Loads the prepared BLUP phenotype and genotype files and runs GWAS in GAPIT using two principal components and a MAF threshold of 0.05. Analysis was run using the models Blink, MLM, and MLMM.
+
+**5.3:**
+- INPUT:
+  - BLUE phenotype tables (subset BLUE outputs from step 2.2 to one file with only ionomics traits, and one with all other traits)
+  - HapMap genotype table (step 4)
+- OUTPUT: Phenotypic and genotypic files prepared for GAPIT input, filtered to contain the same individuals (differing numbers between ionomics and other trait data)
+- Repeats workflow from step 5.1 on BLUEs. One WIL included in BLUPs is absent from BLUEs because absence from all 2023 environments prevented downstream GAPIT model convergence across traits. Similarly, the ionomics BLUEs are missing three WILs for the same reason.
+
+**5.4:**
+- INPUT: Genotypic and phenotypic files from step 5.3
+- OUTPUT: GAPIT GWAS output files for BLUEs
+- PARAMETER MODIFICATION: Update the number of PCs included as covariates, the MAF threshold, and the set of GWAS models to run as needed
+- Loads the prepared BLUE phenotype and genotype files and runs GWAS in GAPIT using two principal components and a MAF threshold of 0.05. Analysis was run using the models Blink, MLM, and MLMM. Separate runs are performed for the broader BLUE trait set and the ionomics BLUEs.
+
