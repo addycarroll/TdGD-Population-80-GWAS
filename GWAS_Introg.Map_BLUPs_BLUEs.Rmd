@@ -1,0 +1,192 @@
+```{r}
+
+###################################
+## Package installation and loading
+###################################
+
+# Install GAPIT
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install()
+BiocManager::install(c("multtest", "chopsticks", "snpStats"))
+install.packages("gplots")
+install.packages("scatterplot3d")
+install.packages("genetics")
+install.packages("EMMREML")
+
+# Load packages
+library(BiocManager)
+library(MASS)
+library(multtest)
+library(scatterplot3d)
+library(genetics)
+library(EMMREML)
+library(compiler)
+library(GAPIT)
+library(gplots)
+library(colorRamps)
+library(ggplot2)
+library(dplyr)
+
+# Load GAPIT functions - alternative to using GAPIT directly
+source("http://zzlab.net/GAPIT/gapit_functions.txt")
+
+```
+
+```{r}
+
+####################################
+## Prepare BLUPs and Hapmap for GWAS
+####################################
+
+pheno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./standardized data_BLUPs_majority cluster.txt", head=T, sep = "\t")
+
+geno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pop80_CRHetFilter_Hapmap.txt", head=T)
+
+# Find the intersection of individuals present in both datasets
+common_individuals <- intersect(pheno$Taxa, colnames(geno)[12:ncol(geno)])
+
+# Create a vector of column names to select, including the first 11 columns and the common individuals
+columns_to_select <- c(names(geno)[1:11], common_individuals)
+
+# Subset genotypic data to include only common individuals
+geno_subset <- geno[, columns_to_select]
+
+write.table(geno_subset, "/homes/addyhope/research/GWAS_Introg.Map./Geno_GWAS.txt", sep = "\t", row.names = FALSE)
+
+# Individuals present in geno (assuming first 11 cols are markers/meta)
+geno_inds <- colnames(geno)[12:ncol(geno)]
+
+# Keep only those rows in pheno
+pheno_subset <- pheno[pheno$Taxa %in% geno_inds, , drop = FALSE]
+
+# Reorder pheno rows to match geno individual order
+pheno_subset <- pheno_subset[match(geno_inds, pheno_subset$Taxa, nomatch = 0), ]
+
+# Save
+write.table(
+  pheno_subset,
+  "/homes/addyhope/research/GWAS_Introg.Map./Pheno_GWAS.txt",
+  sep = "\t", row.names = FALSE, quote = FALSE
+)
+
+```
+
+```{r}
+
+################################
+## Run GWAS on BLUPs using GAPIT
+################################
+
+# Load genotypic and phenotypic data
+geno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Geno_GWAS.txt", head=F)
+pheno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pheno_GWAS.txt", head=T)
+
+# Run GWAS with 2 principal components and a MAF of 0.05
+# - Run with models Blink, MLM, and MLMM
+# - File outputs specific to genotypic data (e.g. relationship matrix) will be rewritten with each run, so move to subdirectories as needed
+GAPIT <- GAPIT(Y = pheno[1:48], G = geno, PCA.total = 2, SNP.MAF = 0.05, model = c("Blink"))
+
+```
+
+```{r}
+
+####################################
+## Prepare BLUEs and Hapmap for GWAS
+####################################
+
+# Note: one WIL is excluded due to absence from all 2023 envs
+
+pheno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pop80_BLUEs_majorityCluster_standardized.txt", head=T, sep = "\t")
+
+geno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pop80_CRHetFilter_Hapmap.txt", head=T)
+
+# Find the intersection of individuals present in both datasets
+common_individuals <- intersect(pheno$Taxa, colnames(geno)[12:ncol(geno)])
+
+# Create a vector of column names to select
+columns_to_select <- c(names(geno)[1:11], common_individuals)
+
+# Subset genotypic data to include only common individuals
+geno_subset <- geno[, columns_to_select]
+
+write.table(geno_subset, "/homes/addyhope/research/GWAS_Introg.Map./Geno_GWAS_BLUEs.txt", sep = "\t", row.names = FALSE)
+
+# Individuals present in geno
+geno_inds <- colnames(geno)[12:ncol(geno)]
+
+# Keep only those rows in pheno
+pheno_subset <- pheno[pheno$Taxa %in% geno_inds, , drop = FALSE]
+
+# Reorder pheno rows to match geno individual order
+pheno_subset <- pheno_subset[match(geno_inds, pheno_subset$Taxa, nomatch = 0), ]
+
+# Save
+write.table(
+  pheno_subset,
+  "/homes/addyhope/research/GWAS_Introg.Map./Pheno_BLUEs_GWAS.txt",
+  sep = "\t", row.names = FALSE, quote = FALSE
+)
+
+#############################################
+## Prepare ionomics BLUEs and Hapmap for GWAS
+#############################################
+
+# Note: three WILs are excluded due to absence from 2023 THD
+
+pheno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pop80_BLUEs_majorityCluster_standardized_ionomics.txt", head=T, sep = "\t")
+
+geno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pop80_CRHetFilter_Hapmap.txt", head=T)
+
+# Find the intersection of individuals present in both datasets
+common_individuals <- intersect(pheno$Taxa, colnames(geno)[12:ncol(geno)])
+
+# Create a vector of column names to select
+columns_to_select <- c(names(geno)[1:11], common_individuals)
+
+# Subset genotypic data to include only common individuals
+geno_subset <- geno[, columns_to_select]
+
+write.table(geno_subset, "/homes/addyhope/research/GWAS_Introg.Map./Geno_GWAS_ionomics.txt", sep = "\t", row.names = FALSE)
+
+# Individuals present in geno
+geno_inds <- colnames(geno)[12:ncol(geno)]
+
+# Keep only those rows in pheno
+pheno_subset <- pheno[pheno$Taxa %in% geno_inds, , drop = FALSE]
+
+# Reorder pheno rows to match geno individual order
+pheno_subset <- pheno_subset[match(geno_inds, pheno_subset$Taxa, nomatch = 0), ]
+
+# Save
+write.table(
+  pheno_subset,
+  "/homes/addyhope/research/GWAS_Introg.Map./Pheno_BLUEs_ionomics_GWAS.txt",
+  sep = "\t", row.names = FALSE, quote = FALSE
+)
+
+```
+
+
+```{r}
+
+################################
+## Run GWAS on BLUEs using GAPIT
+################################
+
+# GWAS BLUEs (same settings as BLUPs)
+geno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Geno_GWAS_BLUEs.txt", head=F)
+pheno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pheno_BLUEs_GWAS.txt", head=T)
+pheno[-1] <- lapply(pheno[-1], function(x) as.numeric(as.character(x)))
+
+GAPIT <- GAPIT(Y = pheno[1:123], G = geno, PCA.total = 2, SNP.MAF = 0.05, model = c("Blink"))
+
+# GWAS ionomics BLUEs
+geno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Geno_GWAS_ionomics.txt", head=F)
+pheno <- read.table("/homes/addyhope/research/GWAS_Introg.Map./Pheno_BLUEs_ionomics_GWAS.txt", head=T)
+pheno[-1] <- lapply(pheno[-1], function(x) as.numeric(as.character(x)))
+
+GAPIT <- GAPIT(Y = pheno[1:58], G = geno, PCA.total = 2, SNP.MAF = 0.05, model = c("Blink"))
+
+```
+

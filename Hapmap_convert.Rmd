@@ -1,0 +1,31 @@
+```{r}
+
+##########################################
+## Convert genotypic data to Hapmap format
+##########################################
+
+data_all <- read.csv("/homes/addyhope/research/snpReady/Pop80_Filtered matrix_CR_Het.csv", head=T)
+
+ref <- data_all$REF
+alt <- data_all$ALT
+
+# Get sample columns
+sample_cols <- colnames(data_all)[!(colnames(data_all) %in% c("Marker", "REF", "ALT"))]
+
+# Loop over sample columns
+for (col in sample_cols) {
+  genos <- data_all[[col]]
+
+  # Vectorized recoding
+  recoded <- ifelse(is.na(genos), NA,
+              ifelse(genos == 0, paste0(ref, "/", ref),
+              ifelse(genos == 1, paste0(ref, "/", alt),
+              ifelse(genos == 2, paste0(alt, "/", alt), NA))))
+  
+  data_all[[col]] <- recoded
+}
+
+write.table(data_all,"/homes/addyhope/research/snpReady/Pop80_CRHetFilter_Hapmap.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+```
+
