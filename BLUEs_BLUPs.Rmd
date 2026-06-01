@@ -894,3 +894,201 @@ dev.off()
 
 ```
 
+```{r}
+
+####################################################################################################################
+## Regression based approach to assessing relationships between derived traits and their individual component traits
+####################################################################################################################
+
+blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Mr. Bean BLUEs/BLUEs_standardized data.csv", stringsAsFactors = FALSE)
+
+blups <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/standardized data_BLUPs.csv", stringsAsFactors = FALSE)
+
+## GFP ~ HD + SD
+
+# Clean BLUP dataset
+blups_reg_gfp <- blups %>%
+  select(Genotype, HD, SD, GFP) %>%
+  mutate(
+    HD = as.numeric(HD),
+    SD = as.numeric(SD),
+    GFP = as.numeric(GFP)
+  ) %>%
+  filter(
+    !is.na(HD),
+    !is.na(SD),
+    !is.na(GFP)
+  )
+
+# Clean BLUE dataset
+blues_reg_gfp <- blues %>%
+  select(Environment, Genotype, Group, HD_blue, SD_blue, GFP_blue) %>%
+  rename(
+    HD = HD_blue,
+    SD = SD_blue,
+    GFP = GFP_blue
+  ) %>%
+  mutate(
+    HD = as.numeric(HD),
+    SD = as.numeric(SD),
+    GFP = as.numeric(GFP)
+  ) %>%
+  filter(
+    !is.na(Environment),
+    !is.na(HD),
+    !is.na(SD),
+    !is.na(GFP)
+  )
+
+# Run multiple linear regression model
+blup_gfp_hd_sd_model <- lm(GFP ~ HD + SD, data = blups_reg_gfp)
+
+summary(blup_gfp_hd_sd_model)
+
+blup_gfp_hd_sd_results <- data.frame(
+  Dataset = "BLUPs",
+  Environment = "Across environments",
+  Response = "GFP",
+  Model = "GFP ~ HD + SD",
+  Intercept = unname(coef(blup_gfp_hd_sd_model)[1]),
+  Slope_HD = unname(coef(blup_gfp_hd_sd_model)["HD"]),
+  Slope_SD = unname(coef(blup_gfp_hd_sd_model)["SD"]),
+  R_squared = summary(blup_gfp_hd_sd_model)$r.squared,
+  Adj_R_squared = summary(blup_gfp_hd_sd_model)$adj.r.squared,
+  P_value_HD = summary(blup_gfp_hd_sd_model)$coefficients["HD", "Pr(>|t|)"],
+  P_value_SD = summary(blup_gfp_hd_sd_model)$coefficients["SD", "Pr(>|t|)"],
+  N = nrow(blups_reg_gfp)
+)
+
+blue_gfp_hd_sd_results <- blues_reg_gfp %>%
+  group_by(Environment) %>%
+  do({
+    model <- lm(GFP ~ HD + SD, data = .)
+    
+    data.frame(
+      Dataset = "BLUEs",
+      Response = "GFP",
+      Model = "GFP ~ HD + SD",
+      Intercept = unname(coef(model)[1]),
+      Slope_HD = unname(coef(model)["HD"]),
+      Slope_SD = unname(coef(model)["SD"]),
+      R_squared = summary(model)$r.squared,
+      Adj_R_squared = summary(model)$adj.r.squared,
+      P_value_HD = summary(model)$coefficients["HD", "Pr(>|t|)"],
+      P_value_SD = summary(model)$coefficients["SD", "Pr(>|t|)"],
+      N = nrow(.)
+    )
+  }) %>%
+  ungroup()
+
+# Aggregate results from BLUP and BLUE models
+gfp_hd_sd_results <- bind_rows(
+  blup_gfp_hd_sd_results,
+  blue_gfp_hd_sd_results
+)
+
+rownames(gfp_hd_sd_results) <- NULL
+
+gfp_hd_sd_results
+
+# Save results
+write.csv(
+  gfp_hd_sd_results,
+  "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/GFP_HD_SD_joint_regression_results.csv",
+  row.names = FALSE
+)
+
+
+## PQS ~ GP + SRC
+
+# Clean BLUP dataset
+blups_reg_pqs <- blups %>%
+  select(Genotype, GP, SRC, PQS) %>%
+  mutate(
+    GP = as.numeric(GP),
+    SRC = as.numeric(SRC),
+    PQS = as.numeric(PQS)
+  ) %>%
+  filter(
+    !is.na(GP),
+    !is.na(SRC),
+    !is.na(PQS)
+  )
+
+# Clean BLUE dataset
+blues_reg_pqs <- blues %>%
+  select(Environment, Genotype, Group, GP_blue, SRC_blue, PQS_blue) %>%
+  rename(
+    GP = GP_blue,
+    SRC = SRC_blue,
+    PQS = PQS_blue
+  ) %>%
+  mutate(
+    GP = as.numeric(GP),
+    SRC = as.numeric(SRC),
+    PQS = as.numeric(PQS)
+  ) %>%
+  filter(
+    !is.na(Environment),
+    !is.na(GP),
+    !is.na(SRC),
+    !is.na(PQS)
+  )
+
+# Run multiple linear regression model
+blup_pqs_gp_src_model <- lm(PQS ~ GP + SRC, data = blups_reg_pqs)
+
+summary(blup_pqs_gp_src_model)
+
+blup_pqs_gp_src_results <- data.frame(
+  Dataset = "BLUPs",
+  Environment = "Across environments",
+  Response = "PQS",
+  Model = "PQS ~ GP + SRC",
+  Intercept = unname(coef(blup_pqs_gp_src_model)[1]),
+  Slope_GP = unname(coef(blup_pqs_gp_src_model)["GP"]),
+  Slope_SRC = unname(coef(blup_pqs_gp_src_model)["SRC"]),
+  R_squared = summary(blup_pqs_gp_src_model)$r.squared,
+  Adj_R_squared = summary(blup_pqs_gp_src_model)$adj.r.squared,
+  P_value_GP = summary(blup_pqs_gp_src_model)$coefficients["GP", "Pr(>|t|)"],
+  P_value_SRC = summary(blup_pqs_gp_src_model)$coefficients["SRC", "Pr(>|t|)"],
+  N = nrow(blups_reg_pqs)
+)
+
+blue_pqs_gp_src_results <- blues_reg_pqs %>%
+  group_by(Environment) %>%
+  do({
+    model <- lm(PQS ~ GP + SRC, data = .)
+    
+    data.frame(
+      Dataset = "BLUEs",
+      Response = "PQS",
+      Model = "PQS ~ GP + SRC",
+      Intercept = unname(coef(model)[1]),
+      Slope_GP = unname(coef(model)["GP"]),
+      Slope_SRC = unname(coef(model)["SRC"]),
+      R_squared = summary(model)$r.squared,
+      Adj_R_squared = summary(model)$adj.r.squared,
+      P_value_GP = summary(model)$coefficients["GP", "Pr(>|t|)"],
+      P_value_SRC = summary(model)$coefficients["SRC", "Pr(>|t|)"],
+      N = nrow(.)
+    )
+  }) %>%
+  ungroup()
+
+pqs_gp_src_results <- bind_rows(
+  blup_pqs_gp_src_results,
+  blue_pqs_gp_src_results
+)
+
+rownames(pqs_gp_src_results) <- NULL
+
+pqs_gp_src_results
+
+write.csv(
+  pqs_gp_src_results,
+  "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Regression/PQS_GP_SRC_joint_regression_results.csv",
+  row.names = FALSE
+)
+
+```
