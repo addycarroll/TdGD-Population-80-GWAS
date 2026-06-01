@@ -1,0 +1,150 @@
+```{r}
+
+##################
+## Package loading
+##################
+
+# DiGGer can be downloaded from http://www.nswdpibiom.org/austatgen/software/download.php?digger=T and installed from a zip file
+
+library(DiGGer)
+
+```
+
+```{r}
+
+#######################################
+## Create randomizations for each trial
+#######################################
+
+# Ellis County (EL)
+
+pr80_EL <- prDiGGer(297, # number of total entries
+                    20, # number of columns in trial
+                    24, # number of rows in trial
+                    blockSequence = list(c(4, # number of columns per block
+                                           24), # number of total rows
+                                         c(4, # number of columns per block
+                                           12), # number of rows per block
+                                         c(1,12)), # ensures only 1 replicate of a given entry occurs in each column of 12 rows per block
+                    treatRepPerRep = rep(c(1,2,10), # defines how many replications might be assigned to a given entry
+                                         c(146, # number of entries with 1 replication
+                                           147, # number of entries with 2 replications
+                                           4)), # number of entries with 10 replications (checks)
+                    treatGroup = rep(c(1,1,1), # vector of treatment groups
+                                     c(146,147,4)), # number of entries assigned to each treatment group
+                    splitOpt = c(4,12), # number of columns and rows per block used for optimization
+                    runSearch = FALSE) # generates initial design only; does not run final optimization search
+
+# Ensure even representation across replicates
+desTab(getInitialDesign(pr80_EL),20,12) # number of columns and rows per replicate for checking the initial design
+
+# Ensure even representation across blocks
+desTab(getInitialDesign(pr80_EL),4,12) # number of columns and rows per block for checking the initial design
+
+getSeeds(pr80_EL) # returns random seeds from the initial design that can be reused for reproducibility
+
+# Run optimized version to produce final results
+pr80_EL_Opt <- prDiGGer(297, 
+                        20, 
+                        24, 
+                        blockSequence = list(c(4,24), 
+                                             c(4,12), 
+                                             c(1,12)),
+                        treatRepPerRep = rep(c(1,2,10), 
+                                             c(146,147,4)), 
+                        treatGroup = rep(c(1,1,1), 
+                                         c(146,147,4)),
+                        rngSeeds = c(182, 7535), # input random seeds obtained from previous getSeeds function
+                        splitOpt = c(4,12),
+                        runSearch = TRUE) # run final optimization search
+
+desTab(pr80_EL_Opt$dmat,20,12)
+desTab(pr80_EL_Opt$dmat,4,12)
+# Ensure 12 rows in each column within each block
+desTab(pr80_EL_Opt$dmat,1,12)
+
+write.csv(pr80_EL_Opt$dlist,file = "23_TdGD80_YT_EL.csv",row.names = FALSE,quote = FALSE)
+
+
+# Riley County (RL)
+
+pr80_RL <- prDiGGer(297, 
+                    20, 
+                    24,
+                    blockSequence = list(c(4,24), 
+                                         c(4,12), 
+                                         c(1,12)),
+                    treatRepPerRep = rep(c(2,1,10), # ensures the opposite entries get replicated compared to previous trial
+                                         c(147,146,4)),
+                    treatGroup = rep(c(1,1,1), 
+                                     c(147,146,4)),
+                    splitOpt = c(4,12),
+                    runSearch = FALSE)
+
+desTab(getInitialDesign(pr80_RL),20,12)
+desTab(getInitialDesign(pr80_RL),4,12)
+
+getSeeds(pr80_RL)
+
+pr80_RL_Opt <- prDiGGer(297, 
+                        20, 
+                        24, 
+                        blockSequence = list(c(4,24), c(4,12), c(1,12)),
+                        treatRepPerRep = rep(c(2,1,10), c(147,146,4)), 
+                        treatGroup = rep(c(1,1,1), c(147,146,4)),
+                        rngSeeds = c(20257, 25811),
+                        splitOpt = c(4,12),
+                        runSearch = TRUE)
+
+desTab(pr80_RL_Opt$dmat,20,12)
+desTab(pr80_RL_Opt$dmat,4,12)
+desTab(pr80_RL_Opt$dmat,1,12)
+
+write.csv(pr80_RL_Opt$dlist,file = "23_TdGD80_YT_RL.csv",row.names = FALSE,quote = FALSE)
+
+
+# Thomas County (THD)
+
+pr80_THD <- prDiGGer(297, 
+                     20, 
+                     24,
+                     blockSequence = list(c(4,24), 
+                                          c(4,12), 
+                                          c(1,12)),
+                     treatRepPerRep = rep(c(2,1,10), 
+                                          c(147,146,4)),
+                     treatGroup = rep(c(1,1,1), 
+                                      c(147,146,4)),
+                     splitOpt = c(4,12),
+                     runSearch = FALSE)
+
+desTab(getInitialDesign(pr80_THD),20,12)
+desTab(getInitialDesign(pr80_THD),4,12)
+
+getSeeds(pr80_THD)
+
+pr80_THD_Opt <- prDiGGer(297, 
+                         20, 
+                         24, 
+                         blockSequence = list(c(4,24), 
+                                              c(4,12), 
+                                              c(1,12)),
+                         treatRepPerRep = rep(c(2,1,10), 
+                                              c(147,146,4)), 
+                         treatGroup = rep(c(1,1,1), 
+                                          c(147,146,4)),
+                         rngSeeds = c(19747,25550),
+                         splitOpt = c(4,12),
+                         runSearch = TRUE)
+
+desTab(pr80_THD_Opt$dmat,20,12)
+desTab(pr80_THD_Opt$dmat,4,12)
+desTab(pr80_THD_Opt$dmat,1,12)
+
+write.csv(pr80_THD_Opt$dlist,file = "23_TdGD80_YT_THD.csv",row.names = FALSE,quote = FALSE)
+
+## Note: RANGE output corresponds to rows specified in design, while ROW corresponds to columns specified in design
+## Note: Plots are arranged in cartesian style, so if serpentine is desired, output must be modified manually
+
+```
+
