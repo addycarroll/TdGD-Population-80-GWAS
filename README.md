@@ -80,6 +80,16 @@
     - Pearson correlation matrix across traits
     - Correlation heatmap plot
 - For each environment-specific BLUE dataset, converts all trait columns to numeric, computes Pearson correlations, writes the matrix to a .csv, and generates a lower-triangle correlation plot with coefficients displayed on the output .png figure
+
+**2.7:**
+- INPUT:
+  - Within-environment BLUEs from step 2.2
+  - Combined BLUP table from step 2.3
+- OUTPUT: Multiple linear regression results for GFP~HD+SD and PQS~GP+SRC, both using BLUPs and BLUEs
+- For each environment and for across-environment BLUPs, for each derived trait, runs a multiple linear regression model using component traits:
+  - Subsets BLUE and BLUP datasets to only records containing non-missing values for each derivative and component trait
+  - Runs regression model, aggregates results (BLUP and BLUE models)
+  - Saves output file containing the dataset and model information, model results (intercept, partial regression coefficients/slopes, overall coefficient of determination/R2, pvals), and the number of records included
 ***
 ## Genotypic data preparation
 **3. snpReady.Rmd:** Reformat SNP data, filter, and generate population genetic summaries 
