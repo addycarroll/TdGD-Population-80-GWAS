@@ -1,4 +1,18 @@
 # TdGD Pop80 GWAS - Pipeline Description
+## Experimental design
+**0. DiGGer_prRep.Rmd:** Randomizations of partially replicated experimental design in each environment
+- INPUT: For each trial,
+  - Number of entries
+    - Number with 1 replicate
+    - Number with 2 replicates
+    - Number with 10 replicates (checks)
+  - Number of rows and columns
+- OUTPUT: For each trial, a unique randomization of entry numbers by row and column
+- Randomizes each trial in two steps:
+  - First step optimizes trial design and entry allocation to replicates and blocks
+  - Second step uses seeds from first step to produce final optimization
+- Note: the provided file is for one trial year, process was completed in remaining years, but additional code was avoided for redundancy
+***
 ## Phenotypic data preparation and analysis
 **1. Raw_data_standardization.Rmd:** Within-environment standardization of raw phenotypic data
 
