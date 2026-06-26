@@ -17,6 +17,7 @@ library(tidyr)
 library(purrr)
 library(corrplot)
 library(RColorBrewer)
+library(car)
 
 # Run the MrBean app and activate ASReml license
 MrBean::run_app()
@@ -273,16 +274,19 @@ print(head(blups_df))
 ## Plot trait distributions with one facet for each environment (BLUEs) and for BLUPs
 #####################################################################################
 
+# Read the CSV file
+blups_df <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/standardized data_BLUPs.csv")
+
+getwd()
 # Plotting configuration
 cfg <- list(
   rp_name         = "KS061278M-4",
-  checks          = c("Billings","Joe","Showdown","SY Monument","WB 4699"),
+  checks          = c("Billings","Joe","Showdown","SY Monument"),
   check_colors    = c(
     "Billings"    = "#1b9e77",
     "Joe"         = "#7570b3",
     "Showdown"    = "#e7298a",
-    "SY Monument" = "#66a61e",
-    "WB 4699"     = "#e6ab02"
+    "SY Monument" = "#66a61e"
   ),
   binwidth        = 0.25,
   boundary        = 0,
@@ -481,13 +485,13 @@ plot_blue_blup_hists <- function(trait, cfg) {
       data = dplyr::filter(anchors_plot, Legend != "RP"),
       ggplot2::aes(x = value, xend = value, y = 0, yend = seg_top,
                    color = Legend, linewidth = Legend),
-      inherit.aes = FALSE, show.legend = TRUE
+      inherit.aes = FALSE, show.legend = FALSE
     ) +
     ggplot2::geom_segment(
       data = dplyr::filter(anchors_plot, Legend == "RP"),
       ggplot2::aes(x = value, xend = value, y = 0, yend = seg_top,
                    color = Legend, linewidth = Legend),
-      inherit.aes = FALSE, show.legend = TRUE
+      inherit.aes = FALSE, show.legend = FALSE
     ) +
     ggplot2::geom_label(
       data = dplyr::filter(lab_df, !is.na(short)),
@@ -514,6 +518,7 @@ plot_blue_blup_hists <- function(trait, cfg) {
       ),
       strip.text = ggplot2::element_text(face = "bold"),
       panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "none", # create plots without legend
       plot.margin = ggplot2::margin(t = 12, r = 16, b = 8, l = 10)
     ) +
     ggplot2::coord_cartesian(xlim = x_lim, clip = "off")
@@ -546,18 +551,36 @@ for (tr in traits) {
 ## BLUP correlations
 ####################
 
+# Read the CSV file
+blups_df <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/standardized data_BLUPs.csv")
+
 # Convert BLUPs data (excluding Genotype column) to a matrix
 blups_matrix <- blups_df %>% select(-Genotype) %>% as.matrix()
 
+# Separate by ionomics and all other traits
+blups_traits <- blups_matrix[, -c(18:36)]
+blups_ionomics <- blups_matrix[, -c(1:17, 37:46)]
+
 # Compute Pearson correlation matrix (phenotypic correlations)
 phenotypic_cor_matrix <- cor(blups_matrix, method = "pearson")
+phenotypic_cor_matrix_traits <- cor(blups_traits, method = "pearson")
+phenotypic_cor_matrix_ionomics <- cor(blups_ionomics, method = "pearson")
 
 write.csv(phenotypic_cor_matrix, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation.csv", row.names = TRUE)
+write.csv(phenotypic_cor_matrix_traits, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation_noIonomics.csv", row.names = TRUE)
+write.csv(phenotypic_cor_matrix_ionomics, "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation_Ionomics.csv", row.names = TRUE)
 
 # Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
 pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation.csv", row.names = 1)
-pheno_matrix <- as.matrix(pheno)  
+pheno_matrix <- as.matrix(pheno)
 
+pheno_traits <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation_noIonomics.csv", row.names = 1)
+pheno_matrix_traits <- as.matrix(pheno_traits)  
+
+pheno_ionomics <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_pearson_correlation_Ionomics.csv", row.names = 1)
+pheno_matrix_ionomics <- as.matrix(pheno_ionomics)  
+
+# All traits
 # Sets up the PNG file to save the plot.
 png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_corrplot.png", 
     width = 1600, height = 1550) 
@@ -570,6 +593,62 @@ color_scheme <- COL2('PuOr', 20)
 
 # Plot the Pearson correlation matrix in the lower triangle
 corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# No ionomics
+# Sets up the PNG file to save the plot.
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_corrplot_noIonomics.png", 
+    width = 1000, height = 1000) 
+
+# Sets margins around the plot - right margin leaves room for the legend
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme and number of gradient levels
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_traits, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# Ionomics
+# Sets up the PNG file to save the plot.
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/ASReml-R BLUPs/BLUP_corrplot_Ionomics.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot - right margin leaves room for the legend
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme and number of gradient levels
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_ionomics, 
          method = "color", 
          type = "lower",  # Plot only the lower triangle
          addCoef.col = 'black',  # Displays correlation coefficients in black
@@ -601,19 +680,31 @@ blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/
 # Convert all columns to numeric
 blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
 
-# Check the structure of the data
-str(blues)
+# Separate by ionomics and other traits
+blues_traits <- blues[, -c(18:36)]
+blues_ionomics <- blues[, -c(1:17, 37:46)]
 
 # Calculate the Pearson correlation matrix
 pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+pearson_correlation_traits <- cor(blues_traits, method = "pearson", use = "pairwise.complete.obs")
+pearson_correlation_ionomics <- cor(blues_ionomics, method = "pearson", use = "pairwise.complete.obs")
 
 # Save the Pearson correlation matrix to a CSV file
 write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr.csv", row.names = TRUE)
+write.csv(pearson_correlation_traits, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr_noIonomics.csv", row.names = TRUE)
+write.csv(pearson_correlation_ionomics, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr_Ionomics.csv", row.names = TRUE)
 
 # Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
 pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr.csv", row.names = 1)
 pheno_matrix <- as.matrix(pheno)  
 
+pheno_traits <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr_noIonomics.csv", row.names = 1)
+pheno_matrix_traits <- as.matrix(pheno_traits)  
+
+pheno_ionomics <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_pheno_corr_Ionomics.csv", row.names = 1)
+pheno_matrix_ionomics <- as.matrix(pheno_ionomics) 
+
+# All traits
 # Sets up the PNG file to save the plot
 png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_corrplot.png", 
     width = 1600, height = 1600) 
@@ -642,6 +733,63 @@ corrplot(pheno_matrix,
 # Finalizes the plot and saves it as a PNG file
 dev.off()
 
+# No ionomics
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_corrplot_noIonomics.png", 
+    width = 1000, height = 1000) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_traits, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# Ionomics
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/21THD_corrplot_Ionomics.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_ionomics, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
 
 ## 2022 EL
 
@@ -751,19 +899,31 @@ blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/
 # Convert all columns to numeric
 blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
 
-# Check the structure of the data
-str(blues)
+# Separate by ionomics and other traits
+blues_traits <- blues[, -c(15:33)]
+blues_ionomics <- blues[, -c(1:14)]
 
 # Calculate the Pearson correlation matrix
 pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+pearson_correlation_traits <- cor(blues_traits, method = "pearson", use = "pairwise.complete.obs")
+pearson_correlation_ionomics <- cor(blues_ionomics, method = "pearson", use = "pairwise.complete.obs")
 
 # Save the Pearson correlation matrix to a CSV file
 write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr.csv", row.names = TRUE)
+write.csv(pearson_correlation_traits, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr_noIonomics.csv", row.names = TRUE)
+write.csv(pearson_correlation_ionomics, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr_Ionomics.csv", row.names = TRUE)
 
 # Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
 pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr.csv", row.names = 1)
 pheno_matrix <- as.matrix(pheno)  
 
+pheno_traits <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr_noIonomics.csv", row.names = 1)
+pheno_matrix_traits <- as.matrix(pheno_traits)  
+
+pheno_ionomics <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_pheno_corr_Ionomics.csv", row.names = 1)
+pheno_matrix_ionomics <- as.matrix(pheno_ionomics) 
+
+# All traits
 # Sets up the PNG file to save the plot
 png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_corrplot.png", 
     width = 1150, height = 1150) 
@@ -776,6 +936,64 @@ color_scheme <- COL2('PuOr', 20)
 
 # Plot the Pearson correlation matrix in the lower triangle
 corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# No ionomics
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_corrplot_noIonomics.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_traits, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# Ionomics
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/22THD_corrplot_Ionomics.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_ionomics, 
          method = "color", 
          type = "lower",  # Plot only the lower triangle
          addCoef.col = 'black',  # Displays correlation coefficients in black
@@ -851,19 +1069,31 @@ blues <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/
 # Convert all columns to numeric
 blues <- as.data.frame(lapply(blues, function(x) as.numeric(as.character(x))))
 
-# Check the structure of the data
-str(blues)
+# Separate by ionomics and other traits
+blues_traits <- blues[, -c(14:32)]
+blues_ionomics <- blues[, -c(1:13)]
 
 # Calculate the Pearson correlation matrix
 pearson_correlation <- cor(blues, method = "pearson", use = "pairwise.complete.obs")
+pearson_correlation_traits <- cor(blues_traits, method = "pearson", use = "pairwise.complete.obs")
+pearson_correlation_ionomics <- cor(blues_ionomics, method = "pearson", use = "pairwise.complete.obs")
 
 # Save the Pearson correlation matrix to a CSV file
 write.csv(pearson_correlation, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr.csv", row.names = TRUE)
+write.csv(pearson_correlation_traits, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr_noIonomics.csv", row.names = TRUE)
+write.csv(pearson_correlation_ionomics, file = "C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr_Ionomics.csv", row.names = TRUE)
 
 # Reads the saved Pearson correlation matrix from the CSV file and converts it to a matrix
 pheno <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr.csv", row.names = 1)
 pheno_matrix <- as.matrix(pheno)  
 
+pheno_traits <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr_noIonomics.csv", row.names = 1)
+pheno_matrix_traits <- as.matrix(pheno_traits)  
+
+pheno_ionomics <- read.csv("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_pheno_corr_Ionomics.csv", row.names = 1)
+pheno_matrix_ionomics <- as.matrix(pheno_ionomics) 
+
+# All traits
 # Sets up the PNG file to save the plot
 png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_corrplot.png", 
     width = 1150, height = 1150) 
@@ -876,6 +1106,64 @@ color_scheme <- COL2('PuOr', 20)
 
 # Plot the Pearson correlation matrix in the lower triangle
 corrplot(pheno_matrix, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# No ionomics
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_corrplot_noIonomics.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_traits, 
+         method = "color", 
+         type = "lower",  # Plot only the lower triangle
+         addCoef.col = 'black',  # Displays correlation coefficients in black
+         number.cex = 1,  # Adjusts coefficient text size
+         tl.srt = 45,  # Rotates text labels for better readability
+         tl.col = "black",  # Sets text label color
+         tl.cex = 1,  # Adjusts text label size for readability
+         tl.pos = "ld",  # Positions labels on the left and top
+         col = color_scheme,  # Applies the color scheme
+         cl.pos = "b",  # Positions the color legend on the right
+         cl.ratio = 0.1,  # Narrows the width of the legend
+         cl.cex = 0.8)  # Adjusts the size of the legend text
+
+# Finalizes the plot and saves it as a PNG file
+dev.off()
+
+# Ionomics
+# Sets up the PNG file to save the plot
+png("C:/Users/addyhope/OneDrive - Kansas State University/23 TdGD/Analysis/Phenotypic analysis of standardized data/Correlations/Between traits within environment/23THD_corrplot_Ionomics.png", 
+    width = 700, height = 650) 
+
+# Sets margins around the plot
+par(mar = c(0, 0, 0, 1)) 
+
+# Set color scheme
+color_scheme <- COL2('PuOr', 20)
+
+# Plot the Pearson correlation matrix in the lower triangle
+corrplot(pheno_matrix_ionomics, 
          method = "color", 
          type = "lower",  # Plot only the lower triangle
          addCoef.col = 'black',  # Displays correlation coefficients in black
