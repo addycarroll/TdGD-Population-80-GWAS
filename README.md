@@ -38,10 +38,10 @@
 **2. BLUEs_BLUPs.Rmd:** Obtain within-environment BLUEs and weights, across-environment BLUPs, visualize trait distributions, and trait correlations
 
 **2.1:**
-- INPUT: Standardize phenotypic data from step 1.3 prepared for spatial analysis
-- OUTPUT: Within-environment estimates of spatially corrected Genotype performance (BLUEs) and precision weights fo each trait
+- INPUT: Standardized phenotypic data from step 1.3 prepared for spatial analysis
+- OUTPUT: Within-environment estimates of spatially corrected Genotype performance (BLUEs) and precision weights for each trait
 - PARAMETER MODIFICATION: Spatial correction strucuture may be adjusted
-- Use MrBean interface to fit within-environment models for each trait, treating genotype as a fixed effect to obtain BLUEs and weights
+- Uses MrBean interface to fit within-environment models for each trait, treating genotype as a fixed effect to obtain BLUEs and weights
   - Uses AR1 x AR1 ASReml row x column correction for most environments (22THD analyzed using SpATS)
   - Within-environment genetic repeatabilities obtained separately by fitting genotype as a random effect in SpATS
 
@@ -82,10 +82,10 @@
 
 **2.5:**
 - INPUT: Combined BLUP table from step 2.3
-- OUTPUT:
-  - Pearson correlation matrix across BLUP traits
+- OUTPUT: Three sets of correlation, (1) across all traits, (2) across all but ionomics traits, (3) across only ionomics traits
+  - Pearson correlation matrix
   - Correlation heatmap plot
-- Computes a Pearson correlation matrix among trait BLUPs, writes the matrix to a .csv, and generates a lower-triangle correlation plot with coefficients displayed on the output .png figure
+- Computes a Pearson correlation matrix among trait BLUPs, writes the matrix to a .csv, and generates a lower-triangle correlation plot with coefficients displayed on the output .png figures
 
 **2.6:**
 - INPUT: Within-environment BLUEs (separate tables for each environment created out of step 2.2 output)
@@ -94,12 +94,13 @@
     - Pearson correlation matrix across traits
     - Correlation heatmap plot
 - For each environment-specific BLUE dataset, converts all trait columns to numeric, computes Pearson correlations, writes the matrix to a .csv, and generates a lower-triangle correlation plot with coefficients displayed on the output .png figure
+- Note: For THD environments, three separate correlations are obtained: (1) across all traits, (2) across all but ionomics traits, (3) across only ionomics traits
 
 **2.7:**
 - INPUT:
   - Within-environment BLUEs from step 2.2
   - Combined BLUP table from step 2.3
-- OUTPUT: Multiple linear regression results for GFP~HD+SD and PQS~GP+SRC, both using BLUPs and BLUEs
+- OUTPUT: Multiple linear regression results for GFP"~"HD+SD and PQS~GP+SRC, both using BLUPs and BLUEs
 - For each environment and for across-environment BLUPs, for each derived trait, runs a multiple linear regression model using component traits:
   - Subsets BLUE and BLUP datasets to only records containing non-missing values for each derivative and component trait
   - Runs regression model, aggregates results (BLUP and BLUE models)
