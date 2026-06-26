@@ -1,0 +1,60 @@
+```{r}
+
+######################################
+## Multivariate clustering using UPGMA
+######################################
+
+pheno <- read.table("/homes/addyhope/research/GWAS_standardized data/Pheno_GWAS.txt", head=T)
+
+trait_mat <- pheno[, -c(1, 38:47)]  # remove Taxa column
+
+cor_mat <- cor(trait_mat, use = "pairwise.complete.obs", method = "pearson")
+
+dist_cor <- as.dist(1 - cor_mat)
+
+hc_traits <- hclust(dist_cor, method = "average")  # average is UPGMA
+groups_k4 <- cutree(hc_traits, k = 4)  # adjust k as needed
+
+OUT_DIR <- "/homes/addyhope/research"
+if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+options(bitmapType = "cairo")
+
+# Save dendrogram
+
+pdf(file.path(OUT_DIR, "traits_dendrogram_avg_corrdist.pdf"),
+    width = 10, height = 7.5, useDingbats = FALSE)
+plot(hc_traits,
+     main = "Hierarchical trait clustering (UPGMA)",
+     xlab = "", ylab = "Correlation distance", sub = "", cex = 0.7)
+dev.off()
+
+# Save clustered heatmap
+rowv <- as.dendrogram(hc_traits)
+colv <- as.dendrogram(hc_traits)
+
+pal <- colorRampPalette(c("navy", "white", "firebrick3"))(50)
+
+pdf(file.path(OUT_DIR, "traits_cor_heatmap_avg_corrdist.pdf"),
+    width = 11, height = 9, useDingbats = FALSE)
+heatmap(cor_mat,
+        Rowv = rowv, Colv = colv, symm = TRUE,
+        scale = "none", col = pal, margins = c(8, 8),
+        xlab = "Traits", ylab = "Traits",
+        main = "Trait correlations (clustered by correlation distance)")
+dev.off()
+
+# Save numeric outputs
+write.csv(cor_mat,
+          file.path(OUT_DIR, "trait_correlations.csv"),
+          row.names = TRUE)
+
+write.csv(as.matrix(dist_cor),
+          file.path(OUT_DIR, "trait_correlation_distance.csv"),
+          row.names = TRUE)
+
+cl_df <- data.frame(Trait = names(groups_k4), Cluster_k4 = groups_k4,
+                    row.names = NULL, check.names = FALSE)
+write.csv(cl_df,
+          file.path(OUT_DIR, "trait_clusters_k4.csv"),
+          row.names = FALSE)
+```
