@@ -195,3 +195,15 @@
   - Inferred high and low allele
   - Inferred RP and donor effect directions
 - For each GWAS hit, calculates mean phenotype values for the genotype classes defined by the REF and ALT alleles. Using the homozygote class means, infers which allele is associated with lower versus higher trait values. Compares those inferred allele effects to the parent allele calls to assign donor and RP directions of effect. Records genotype counts and counts matching parent genotype classes.
+***
+## Hierarchical trait clustering
+**7. Correlation_distance.Rmd:** Perform trait clustering based on UPGMA correlation distance
+- INPUT: BLUP genotype table (from step 2.3)
+- OUTPUT:
+  - Pearson correlation matrix
+  - Correlation distance matrix
+  - Assignment of traits into clusters
+  - Dendrogram visualizing correlation distance
+  - Heatmap as an alternative visualization of correlation distance
+- PARAMETER MODIFICATION: Specify the number of clusters to use when grouping trait using k =
+- Generates a correlation matrix, computes correlation distance, uses UPGMA to assign traits to clusters, and generates visual outputs to show trait groupings (dendrogram and heatmap)
